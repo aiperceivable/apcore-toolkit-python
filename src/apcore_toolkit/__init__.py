@@ -12,6 +12,8 @@ from apcore_toolkit.scanner import BaseScanner
 from apcore_toolkit.schema_utils import enrich_schema_descriptions
 from apcore_toolkit.types import ScannedModule
 
+__version__ = "0.1.0"
+
 __all__ = [
     "BaseScanner",
     "PythonWriter",
