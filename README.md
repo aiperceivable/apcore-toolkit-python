@@ -24,7 +24,21 @@ pip install apcore-toolkit
 | `YAMLWriter` | Generates `.binding.yaml` files for `apcore.BindingLoader` |
 | `PythonWriter` | Generates `@module`-decorated Python wrapper files |
 | `RegistryWriter` | Registers modules directly into an `apcore.Registry` |
+| `AIEnhancer` | SLM-based metadata enhancement for scanned modules |
+| `WriteResult` | Structured result type for all writer operations |
+| `WriteError` | Error class for I/O failures during write |
+| `Verifier` | Pluggable protocol for validating written artifacts |
+| `VerifyResult` | Result type for verification operations |
+| `YAMLVerifier` | Verifies YAML files parse correctly with required fields |
+| `SyntaxVerifier` | Verifies source files are non-empty and readable |
+| `RegistryVerifier` | Verifies modules are registered and retrievable |
+| `MagicBytesVerifier` | Verifies file headers match expected magic bytes |
+| `JSONVerifier` | Verifies JSON files parse correctly |
 | `to_markdown` | Converts arbitrary dicts to Markdown with depth control and table heuristics |
+| `flatten_pydantic_params` | Converts Pydantic model parameters to flat kwargs |
+| `resolve_target` | Resolves "module.path:function_name" to callable |
+| `enrich_schema_descriptions` | Merges descriptions into JSON Schema properties |
+| `get_writer` | Factory function for writer instances |
 
 ## Usage
 
@@ -123,9 +137,13 @@ md = to_markdown({"name": "Alice", "role": "admin"}, title="User Info")
 ## Requirements
 
 - Python >= 3.11
-- apcore >= 0.9.0
+- apcore >= 0.13.0
 - pydantic >= 2.0
 - PyYAML >= 6.0
+
+## Documentation
+
+Full documentation is available at [https://github.com/aipartnerup/apcore-toolkit](https://github.com/aipartnerup/apcore-toolkit).
 
 ## License
 
