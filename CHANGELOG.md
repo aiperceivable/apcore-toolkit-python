@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-03-12
+
+### Fixed
+
+- README — added 5 concrete verifier classes (`YAMLVerifier`, `SyntaxVerifier`,
+  `RegistryVerifier`, `MagicBytesVerifier`, `JSONVerifier`) to Core Modules table
+  for documentation completeness
+
+---
+
+## [0.3.0] - 2026-03-12
+
+### Changed
+
+- **apcore >= 0.13.0** — Upgraded minimum dependency to support new
+  `ModuleAnnotations` caching and pagination fields:
+  `cacheable`, `cache_ttl`, `cache_key_fields`, `paginated`, `pagination_style`
+- `infer_annotations_from_method()` — `GET` now also infers `cacheable=True`
+- `AIEnhancer` — Annotation inference prompt and acceptance logic extended
+  to handle all 11 annotation fields (5 new: `cacheable`, `cache_ttl`,
+  `cache_key_fields`, `paginated`, `pagination_style`)
+
+---
+
 ## [0.2.0] - 2026-03-11
 
 ### Added

@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from apcore_toolkit.output.types import WriteResult
+from apcore_toolkit.output.errors import WriteError
+from apcore_toolkit.output.types import Verifier, WriteResult
+from apcore_toolkit.output.verifiers import YAMLVerifier, run_verifier_chain
 from apcore_toolkit.serializers import annotations_to_dict
 
 if TYPE_CHECKING:
@@ -34,6 +36,7 @@ class YAMLWriter:
         output_dir: str,
         dry_run: bool = False,
         verify: bool = False,
+        verifiers: list[Verifier] | None = None,
     ) -> list[WriteResult]:
         """Write YAML binding files for each ScannedModule.
 
@@ -42,6 +45,9 @@ class YAMLWriter:
             output_dir: Directory path to write files to.
             dry_run: If True, return results without writing to disk.
             verify: If True, verify written files are valid YAML with required fields.
+            verifiers: Optional list of custom Verifier instances. When provided,
+                these run after the built-in check (if verify=True). First failure
+                stops the chain.
 
         Returns:
             List of WriteResult instances.
@@ -88,12 +94,24 @@ class YAMLWriter:
                 " to customize schemas.\n\n"
             )
             yaml_content = yaml.dump(binding_data, default_flow_style=False, sort_keys=False)
-            file_path.write_text(header + yaml_content, encoding="utf-8")
+            try:
+                file_path.write_text(header + yaml_content, encoding="utf-8")
+            except OSError as exc:
+                raise WriteError(str(file_path), exc) from exc
             logger.debug("Written: %s", file_path)
 
             result = WriteResult(module_id=module.module_id, path=str(file_path))
             if verify:
                 result = self._verify(result, file_path)
+            if result.verified and verifiers:
+                chain_result = run_verifier_chain(verifiers, str(file_path), module.module_id)
+                if not chain_result.ok:
+                    result = WriteResult(
+                        module_id=result.module_id,
+                        path=result.path,
+                        verified=False,
+                        verification_error=chain_result.error,
+                    )
             results.append(result)
 
         return results
@@ -124,38 +142,12 @@ class YAMLWriter:
     @staticmethod
     def _verify(result: WriteResult, file_path: Path) -> WriteResult:
         """Verify that a written YAML file is well-formed and contains required fields."""
-        try:
-            content = file_path.read_text(encoding="utf-8")
-            parsed = yaml.safe_load(content)
-            if not isinstance(parsed, dict):
-                return WriteResult(
-                    module_id=result.module_id,
-                    path=result.path,
-                    verified=False,
-                    verification_error="YAML root is not a mapping",
-                )
-            bindings = parsed.get("bindings")
-            if not isinstance(bindings, list) or len(bindings) == 0:
-                return WriteResult(
-                    module_id=result.module_id,
-                    path=result.path,
-                    verified=False,
-                    verification_error="Missing or empty 'bindings' list",
-                )
-            first = bindings[0]
-            for field in ("module_id", "target"):
-                if not first.get(field):
-                    return WriteResult(
-                        module_id=result.module_id,
-                        path=result.path,
-                        verified=False,
-                        verification_error=f"Missing required field '{field}' in binding",
-                    )
-        except yaml.YAMLError as exc:
+        vr = YAMLVerifier().verify(str(file_path), result.module_id)
+        if not vr.ok:
             return WriteResult(
                 module_id=result.module_id,
                 path=result.path,
                 verified=False,
-                verification_error=f"Invalid YAML: {exc}",
+                verification_error=vr.error,
             )
         return result

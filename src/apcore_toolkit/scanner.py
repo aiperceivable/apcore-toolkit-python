@@ -97,7 +97,7 @@ class BaseScanner(ABC):
         """
         method_upper = method.upper()
         if method_upper == "GET":
-            return ModuleAnnotations(readonly=True)
+            return ModuleAnnotations(readonly=True, cacheable=True)
         elif method_upper == "DELETE":
             return ModuleAnnotations(destructive=True)
         elif method_upper == "PUT":

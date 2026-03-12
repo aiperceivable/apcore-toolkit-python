@@ -134,6 +134,7 @@ class TestInferAnnotationsFromMethod:
     def test_get_readonly(self) -> None:
         ann = BaseScanner.infer_annotations_from_method("GET")
         assert ann.readonly is True
+        assert ann.cacheable is True
         assert ann.destructive is False
 
     def test_delete_destructive(self) -> None:
@@ -150,6 +151,7 @@ class TestInferAnnotationsFromMethod:
         assert ann.readonly is False
         assert ann.destructive is False
         assert ann.idempotent is False
+        assert ann.cacheable is False
 
     def test_case_insensitive(self) -> None:
         ann = BaseScanner.infer_annotations_from_method("get")

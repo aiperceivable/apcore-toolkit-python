@@ -281,6 +281,31 @@ class TestEnhanceModule:
 
         assert result.description == sparse_module.description
 
+    def test_low_confidence_warnings_for_nonbool_fields(
+        self, enhancer: AIEnhancer, sparse_module: ScannedModule
+    ) -> None:
+        """Non-bool annotation fields (cache_ttl, pagination_style, cache_key_fields) emit warnings when below threshold."""
+        llm_response = json.dumps(
+            {
+                "annotations": {
+                    "cache_ttl": 300,
+                    "pagination_style": "cursor",
+                    "cache_key_fields": ["id", "page"],
+                },
+                "confidence": {
+                    "annotations.cache_ttl": 0.3,
+                    "annotations.pagination_style": 0.2,
+                    "annotations.cache_key_fields": 0.1,
+                },
+            }
+        )
+        with patch.object(enhancer, "_call_llm", return_value=llm_response):
+            result = enhancer._enhance_module(sparse_module, ["annotations"])
+
+        assert any("cache_ttl" in w and "Low confidence" in w for w in result.warnings)
+        assert any("pagination_style" in w and "Low confidence" in w for w in result.warnings)
+        assert any("cache_key_fields" in w and "Low confidence" in w for w in result.warnings)
+
 
 class TestEnhance:
     def test_skips_complete_modules(self, enhancer: AIEnhancer, complete_module: ScannedModule) -> None:
@@ -446,3 +471,30 @@ class TestConfiguration:
     def test_timeout_kwarg_zero_raises(self) -> None:
         with pytest.raises(ValueError, match="APCORE_AI_TIMEOUT"):
             AIEnhancer(timeout=0)
+
+    def test_batch_size_from_env(self) -> None:
+        with patch.dict(os.environ, {"APCORE_AI_BATCH_SIZE": "10"}):
+            e = AIEnhancer()
+            assert e.batch_size == 10
+
+    def test_batch_size_kwarg_overrides_env(self) -> None:
+        with patch.dict(os.environ, {"APCORE_AI_BATCH_SIZE": "10"}):
+            e = AIEnhancer(batch_size=3)
+            assert e.batch_size == 3
+
+    def test_batch_size_default(self) -> None:
+        e = AIEnhancer()
+        assert e.batch_size == 5
+
+    def test_invalid_batch_size_env_raises(self) -> None:
+        with patch.dict(os.environ, {"APCORE_AI_BATCH_SIZE": "abc"}):
+            with pytest.raises(ValueError, match="APCORE_AI_BATCH_SIZE"):
+                AIEnhancer()
+
+    def test_zero_batch_size_raises(self) -> None:
+        with pytest.raises(ValueError, match="APCORE_AI_BATCH_SIZE"):
+            AIEnhancer(batch_size=0)
+
+    def test_negative_batch_size_raises(self) -> None:
+        with pytest.raises(ValueError, match="APCORE_AI_BATCH_SIZE"):
+            AIEnhancer(batch_size=-1)

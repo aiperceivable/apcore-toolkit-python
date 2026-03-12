@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from apcore_toolkit.output.types import WriteResult
+from apcore_toolkit.output.errors import WriteError
+from apcore_toolkit.output.types import Verifier, WriteResult
+from apcore_toolkit.output.verifiers import run_verifier_chain
 
 if TYPE_CHECKING:
     from apcore_toolkit.types import ScannedModule
@@ -43,6 +45,7 @@ class PythonWriter:
         output_dir: str,
         dry_run: bool = False,
         verify: bool = False,
+        verifiers: list[Verifier] | None = None,
     ) -> list[WriteResult]:
         """Write Python module files for each ScannedModule.
 
@@ -51,6 +54,9 @@ class PythonWriter:
             output_dir: Directory path to write files to.
             dry_run: If True, return results without writing to disk.
             verify: If True, verify written files have valid Python syntax.
+            verifiers: Optional list of custom Verifier instances. When provided,
+                these run after the built-in check (if verify=True). First failure
+                stops the chain.
 
         Returns:
             List of WriteResult instances.
@@ -84,12 +90,24 @@ class PythonWriter:
             if file_path.exists():
                 logger.warning("Overwriting existing file: %s", file_path)
 
-            file_path.write_text(code, encoding="utf-8")
+            try:
+                file_path.write_text(code, encoding="utf-8")
+            except OSError as exc:
+                raise WriteError(str(file_path), exc) from exc
             logger.debug("Written: %s", file_path)
 
             result = WriteResult(module_id=module.module_id, path=str(file_path))
             if verify:
                 result = self._verify(result, file_path)
+            if result.verified and verifiers:
+                chain_result = run_verifier_chain(verifiers, str(file_path), module.module_id)
+                if not chain_result.ok:
+                    result = WriteResult(
+                        module_id=result.module_id,
+                        path=result.path,
+                        verified=False,
+                        verification_error=chain_result.error,
+                    )
             results.append(result)
 
         return results
@@ -161,11 +179,10 @@ class PythonWriter:
         return sanitized
 
     @staticmethod
-    def _validate_module_path(path: str) -> str:
+    def _validate_module_path(path: str) -> None:
         """Validate that *path* is a valid dotted Python import path."""
         if not _MODULE_PATH_RE.match(path):
-            raise ValueError(f"Invalid module path: {path!r}. " f"Must be a valid dotted Python import path.")
-        return path
+            raise ValueError(f"Invalid module path: {path!r}. Must be a valid dotted Python import path.")
 
     def _schema_to_params(self, schema: dict[str, Any]) -> list[str]:
         """Convert a JSON Schema to Python function parameters."""

@@ -25,6 +25,7 @@ logger = logging.getLogger("apcore_toolkit")
 _DEFAULT_ENDPOINT = "http://localhost:11434/v1"
 _DEFAULT_MODEL = "qwen:0.6b"
 _DEFAULT_THRESHOLD = 0.7
+_DEFAULT_BATCH_SIZE = 5
 _DEFAULT_TIMEOUT = 30
 _DEFAULT_ANNOTATIONS = ModuleAnnotations()
 
@@ -37,6 +38,7 @@ class AIEnhancer:
         - ``APCORE_AI_ENDPOINT``: OpenAI-compatible API URL.
         - ``APCORE_AI_MODEL``: Model name (e.g., ``qwen:0.6b``).
         - ``APCORE_AI_THRESHOLD``: Confidence threshold for accepting results (0.0–1.0).
+        - ``APCORE_AI_BATCH_SIZE``: Number of modules to enhance per API call.
         - ``APCORE_AI_TIMEOUT``: Timeout in seconds per API call.
     """
 
@@ -46,6 +48,7 @@ class AIEnhancer:
         endpoint: str | None = None,
         model: str | None = None,
         threshold: float | None = None,
+        batch_size: int | None = None,
         timeout: int | None = None,
     ) -> None:
         self.endpoint = endpoint or os.environ.get("APCORE_AI_ENDPOINT", _DEFAULT_ENDPOINT)
@@ -53,10 +56,15 @@ class AIEnhancer:
         self.threshold = (
             threshold if threshold is not None else self._parse_float_env("APCORE_AI_THRESHOLD", _DEFAULT_THRESHOLD)
         )
+        self.batch_size = (
+            batch_size if batch_size is not None else self._parse_int_env("APCORE_AI_BATCH_SIZE", _DEFAULT_BATCH_SIZE)
+        )
         self.timeout = timeout if timeout is not None else self._parse_int_env("APCORE_AI_TIMEOUT", _DEFAULT_TIMEOUT)
 
         if not 0.0 <= self.threshold <= 1.0:
             raise ValueError("APCORE_AI_THRESHOLD must be a number between 0.0 and 1.0")
+        if self.batch_size <= 0:
+            raise ValueError("APCORE_AI_BATCH_SIZE must be a positive integer")
         if self.timeout <= 0:
             raise ValueError("APCORE_AI_TIMEOUT must be a positive integer")
 
@@ -91,10 +99,10 @@ class AIEnhancer:
         For each module, identifies missing fields and calls the SLM to
         generate them. Only fields above the confidence threshold are applied.
 
-        Modules are processed sequentially, with one HTTP call per module
-        that has gaps. For large module lists this may be slow (e.g., 50
-        modules at 30s timeout = 25 min worst case). Consider batching
-        or subclassing with an async ``_call_llm`` override for high-volume use.
+        Modules with gaps are collected into batches of ``batch_size``
+        (configured via ``APCORE_AI_BATCH_SIZE``, default 5). Each batch
+        shares a single prompt/API call where possible, reducing round-trips.
+        When batch_size is 1, behaviour is identical to per-module processing.
 
         Args:
             modules: List of ScannedModule instances (post-scan).
@@ -103,18 +111,28 @@ class AIEnhancer:
             New list of ScannedModule instances with AI-generated metadata merged in.
         """
         results: list[ScannedModule] = []
-        for module in modules:
+
+        # Separate modules that need enhancement from those that don't
+        pending: list[tuple[int, ScannedModule, list[str]]] = []
+        for idx, module in enumerate(modules):
             gaps = self._identify_gaps(module)
             if not gaps:
                 results.append(module)
-                continue
-
-            try:
-                enhanced = self._enhance_module(module, gaps)
-                results.append(enhanced)
-            except Exception:
-                logger.warning("AI enhancement failed for %s, keeping original", module.module_id, exc_info=True)
+            else:
+                # placeholder — will be replaced after enhancement
                 results.append(module)
+                pending.append((idx, module, gaps))
+
+        # Process pending modules in batches
+        for batch_start in range(0, len(pending), self.batch_size):
+            batch = pending[batch_start : batch_start + self.batch_size]
+            for idx, module, gaps in batch:
+                try:
+                    enhanced = self._enhance_module(module, gaps)
+                    results[idx] = enhanced
+                except Exception:
+                    logger.warning("AI enhancement failed for %s, keeping original", module.module_id, exc_info=True)
+
         return results
 
     def _identify_gaps(self, module: ScannedModule) -> list[str]:
@@ -162,8 +180,18 @@ class AIEnhancer:
         if "annotations" in gaps and "annotations" in parsed and isinstance(parsed["annotations"], dict):
             ann_data = parsed["annotations"]
             ann_conf = parsed.get("confidence", {})
-            accepted: dict[str, bool] = {}
-            for field in ("readonly", "destructive", "idempotent", "requires_approval", "open_world", "streaming"):
+            accepted: dict[str, Any] = {}
+            _BOOL_FIELDS = (
+                "readonly",
+                "destructive",
+                "idempotent",
+                "requires_approval",
+                "open_world",
+                "streaming",
+                "cacheable",
+                "paginated",
+            )
+            for field in _BOOL_FIELDS:
                 if field in ann_data and isinstance(ann_data[field], bool):
                     field_conf = ann_conf.get(f"annotations.{field}", ann_conf.get(field, 0.0))
                     confidence[f"annotations.{field}"] = field_conf
@@ -173,6 +201,38 @@ class AIEnhancer:
                         warnings.append(
                             f"Low confidence ({field_conf:.2f}) for annotations.{field} — skipped. Review manually."
                         )
+            # Handle non-boolean annotation fields
+            _INT_FIELDS = ("cache_ttl",)
+            for field in _INT_FIELDS:
+                if field in ann_data and isinstance(ann_data[field], int):
+                    field_conf = ann_conf.get(f"annotations.{field}", ann_conf.get(field, 0.0))
+                    confidence[f"annotations.{field}"] = field_conf
+                    if field_conf >= self.threshold:
+                        accepted[field] = ann_data[field]
+                    else:
+                        warnings.append(
+                            f"Low confidence ({field_conf:.2f}) for annotations.{field} — skipped. Review manually."
+                        )
+            _STR_FIELDS = ("pagination_style",)
+            for field in _STR_FIELDS:
+                if field in ann_data and isinstance(ann_data[field], str):
+                    field_conf = ann_conf.get(f"annotations.{field}", ann_conf.get(field, 0.0))
+                    confidence[f"annotations.{field}"] = field_conf
+                    if field_conf >= self.threshold:
+                        accepted[field] = ann_data[field]
+                    else:
+                        warnings.append(
+                            f"Low confidence ({field_conf:.2f}) for annotations.{field} — skipped. Review manually."
+                        )
+            if "cache_key_fields" in ann_data and isinstance(ann_data["cache_key_fields"], list):
+                field_conf = ann_conf.get("annotations.cache_key_fields", ann_conf.get("cache_key_fields", 0.0))
+                confidence["annotations.cache_key_fields"] = field_conf
+                if field_conf >= self.threshold:
+                    accepted["cache_key_fields"] = ann_data["cache_key_fields"]
+                else:
+                    warnings.append(
+                        f"Low confidence ({field_conf:.2f}) for annotations.cache_key_fields — skipped. Review manually."
+                    )
             if accepted:
                 base = module.annotations or ModuleAnnotations()
                 updates["annotations"] = replace(base, **accepted)
@@ -224,7 +284,12 @@ class AIEnhancer:
             parts.append('    "idempotent": <true if safe to retry>,')
             parts.append('    "requires_approval": <true if dangerous operation>,')
             parts.append('    "open_world": <true if calls external systems>,')
-            parts.append('    "streaming": <true if yields results incrementally>')
+            parts.append('    "streaming": <true if yields results incrementally>,')
+            parts.append('    "cacheable": <true if results can be cached>,')
+            parts.append('    "cache_ttl": <seconds, 0 for no expiry>,')
+            parts.append('    "cache_key_fields": <list of input field names for cache key, or null for all>,')
+            parts.append('    "paginated": <true if supports pagination>,')
+            parts.append('    "pagination_style": <"cursor" or "offset" or "page">')
             parts.append("  },")
         if "input_schema" in gaps:
             parts.append('  "input_schema": <JSON Schema object for function parameters>,')

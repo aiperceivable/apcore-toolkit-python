@@ -10,14 +10,15 @@ Extracted from flask-apcore's registry_writer.py into the shared toolkit.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from apcore_toolkit.output.types import WriteResult
+from apcore_toolkit.output.types import Verifier, WriteResult
+from apcore_toolkit.output.verifiers import RegistryVerifier, run_verifier_chain
 from apcore_toolkit.pydantic_utils import flatten_pydantic_params, resolve_target
 from apcore_toolkit.serializers import annotations_to_dict
 
 if TYPE_CHECKING:
-    from apcore import Registry
+    from apcore import FunctionModule, Registry
 
     from apcore_toolkit.types import ScannedModule
 
@@ -39,6 +40,7 @@ class RegistryWriter:
         *,
         dry_run: bool = False,
         verify: bool = False,
+        verifiers: list[Verifier] | None = None,
     ) -> list[WriteResult]:
         """Register scanned modules into the registry.
 
@@ -47,6 +49,9 @@ class RegistryWriter:
             registry: The apcore Registry to register modules into.
             dry_run: If True, skip registration and return results only.
             verify: If True, verify modules are retrievable from the registry after registration.
+            verifiers: Optional list of custom Verifier instances. When provided,
+                these run after the built-in check (if verify=True). First failure
+                stops the chain.
 
         Returns:
             List of WriteResult instances.
@@ -63,10 +68,19 @@ class RegistryWriter:
             result = WriteResult(module_id=mod.module_id)
             if verify:
                 result = self._verify(result, mod.module_id, registry)
+            if result.verified and verifiers:
+                chain_result = run_verifier_chain(verifiers, "", mod.module_id)
+                if not chain_result.ok:
+                    result = WriteResult(
+                        module_id=result.module_id,
+                        path=result.path,
+                        verified=False,
+                        verification_error=chain_result.error,
+                    )
             results.append(result)
         return results
 
-    def _to_function_module(self, mod: ScannedModule) -> Any:
+    def _to_function_module(self, mod: ScannedModule) -> FunctionModule:
         """Convert a ScannedModule to an apcore FunctionModule.
 
         Args:
@@ -92,20 +106,13 @@ class RegistryWriter:
         )
 
     @staticmethod
-    def _verify(result: WriteResult, module_id: str, registry: Any) -> WriteResult:
+    def _verify(result: WriteResult, module_id: str, registry: Registry) -> WriteResult:
         """Verify that a module was successfully registered and is retrievable."""
-        try:
-            retrieved = registry.get(module_id)
-            if retrieved is None:
-                return WriteResult(
-                    module_id=module_id,
-                    verified=False,
-                    verification_error=f"Module '{module_id}' not found in registry after registration",
-                )
-        except Exception as exc:
+        vr = RegistryVerifier(registry).verify("", module_id)
+        if not vr.ok:
             return WriteResult(
                 module_id=module_id,
                 verified=False,
-                verification_error=f"Registry lookup failed: {exc}",
+                verification_error=vr.error,
             )
         return result
