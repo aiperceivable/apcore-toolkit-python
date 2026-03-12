@@ -2,30 +2,6 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.3.1] - 2026-03-12
-
-### Fixed
-
-- README — added 5 concrete verifier classes (`YAMLVerifier`, `SyntaxVerifier`,
-  `RegistryVerifier`, `MagicBytesVerifier`, `JSONVerifier`) to Core Modules table
-  for documentation completeness
-
----
-
-## [0.3.0] - 2026-03-12
-
-### Changed
-
-- **apcore >= 0.13.0** — Upgraded minimum dependency to support new
-  `ModuleAnnotations` caching and pagination fields:
-  `cacheable`, `cache_ttl`, `cache_key_fields`, `paginated`, `pagination_style`
-- `infer_annotations_from_method()` — `GET` now also infers `cacheable=True`
-- `AIEnhancer` — Annotation inference prompt and acceptance logic extended
-  to handle all 11 annotation fields (5 new: `cacheable`, `cache_ttl`,
-  `cache_key_fields`, `paginated`, `pagination_style`)
-
----
-
 ## [0.2.0] - 2026-03-11
 
 ### Added
@@ -36,6 +12,9 @@ All notable changes to this project will be documented in this file.
   APIs (Ollama, vLLM, LM Studio). Fills missing descriptions, infers behavioral
   annotations, and generates input schemas for untyped functions. All AI-generated
   fields are tagged with `x-generated-by: slm` for auditability.
+  Annotation inference prompt and acceptance logic extended to handle all 11
+  annotation fields (5 new: `cacheable`, `cache_ttl`, `cache_key_fields`,
+  `paginated`, `pagination_style`)
 - Output verification via `verify=True` parameter on all writers:
   - `YAMLWriter`: validates YAML parsability and required binding fields
   - `PythonWriter`: validates Python syntax via `ast.parse()`
@@ -44,6 +23,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **apcore >= 0.13.0** — Upgraded minimum dependency to support new
+  `ModuleAnnotations` caching and pagination fields:
+  `cacheable`, `cache_ttl`, `cache_key_fields`, `paginated`, `pagination_style`
+- `infer_annotations_from_method()` — `GET` now also infers `cacheable=True`
 - **BREAKING**: All writers now return `list[WriteResult]` instead of
   `list[dict]` (YAMLWriter) or `list[str]` (PythonWriter, RegistryWriter).
   Downstream adapters (`django-apcore`, `flask-apcore`) must update code that
@@ -52,6 +35,12 @@ All notable changes to this project will be documented in this file.
   - `result == ["module.id"]` → `[r.module_id for r in result] == ["module.id"]`
   - `f"wrote: {item}"` → `f"wrote: {item.module_id}"`
   - Downstream packages should pin `apcore-toolkit<0.2.0` until updated
+
+### Fixed
+
+- README — added 5 concrete verifier classes (`YAMLVerifier`, `SyntaxVerifier`,
+  `RegistryVerifier`, `MagicBytesVerifier`, `JSONVerifier`) to Core Modules table
+  for documentation completeness
 
 ### Tests
 

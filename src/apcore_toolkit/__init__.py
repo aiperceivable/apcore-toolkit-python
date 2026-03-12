@@ -3,6 +3,8 @@
 Public API re-exports for convenient access to core types and utilities.
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _get_version
 from apcore_toolkit.ai_enhancer import AIEnhancer
 from apcore_toolkit.formatting import to_markdown
 from apcore_toolkit.output import get_writer
@@ -15,7 +17,10 @@ from apcore_toolkit.scanner import BaseScanner
 from apcore_toolkit.schema_utils import enrich_schema_descriptions
 from apcore_toolkit.types import ScannedModule
 
-__version__ = "0.3.0"
+try:
+    __version__ = _get_version("apcore")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 __all__ = [
     "AIEnhancer",
