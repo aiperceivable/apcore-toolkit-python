@@ -18,7 +18,7 @@ from apcore_toolkit.schema_utils import enrich_schema_descriptions
 from apcore_toolkit.types import ScannedModule
 
 try:
-    __version__ = _get_version("apcore")
+    __version__ = _get_version("apcore-toolkit")
 except PackageNotFoundError:
     __version__ = "unknown"
 
