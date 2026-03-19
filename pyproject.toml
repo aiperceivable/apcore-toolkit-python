@@ -36,6 +36,7 @@ dev = [
     "ruff>=0.1",
     "mypy>=1.0",
     "apdev[dev]>=0.2.1",
+    "httpx>=0.24",
 ]
 
 [project.urls]
