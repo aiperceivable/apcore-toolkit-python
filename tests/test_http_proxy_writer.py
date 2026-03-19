@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from apcore import Registry
 
 from apcore_toolkit.output.http_proxy_writer import HTTPProxyRegistryWriter
@@ -64,8 +64,7 @@ class TestHTTPProxyRegistryWriter:
         # Should succeed or gracefully fail (no crash)
         assert len(results) == 1
 
-    @pytest.mark.asyncio
-    async def test_proxy_sends_get_with_query_params(self) -> None:
+    def test_proxy_sends_get_with_query_params(self) -> None:
         registry = Registry()
         writer = HTTPProxyRegistryWriter(
             base_url="http://localhost:8000",
@@ -99,7 +98,7 @@ class TestHTTPProxyRegistryWriter:
         httpx.AsyncClient = MagicMock(return_value=mock_client)
 
         try:
-            result = await module_instance.execute({"page": 1, "size": 10})
+            result = asyncio.run(module_instance.execute({"page": 1, "size": 10}))
             assert result == {"items": [], "total": 0}
 
             # Verify the request was made with query params
@@ -111,8 +110,7 @@ class TestHTTPProxyRegistryWriter:
         finally:
             httpx.AsyncClient = original
 
-    @pytest.mark.asyncio
-    async def test_proxy_sends_post_with_json_body(self) -> None:
+    def test_proxy_sends_post_with_json_body(self) -> None:
         registry = Registry()
         writer = HTTPProxyRegistryWriter(base_url="http://localhost:8000")
 
@@ -145,7 +143,7 @@ class TestHTTPProxyRegistryWriter:
         httpx.AsyncClient = MagicMock(return_value=mock_client)
 
         try:
-            result = await module_instance.execute({"name": "Test"})
+            result = asyncio.run(module_instance.execute({"name": "Test"}))
             assert result["name"] == "Test"
 
             call_args = mock_client.request.call_args
@@ -154,8 +152,7 @@ class TestHTTPProxyRegistryWriter:
         finally:
             httpx.AsyncClient = original
 
-    @pytest.mark.asyncio
-    async def test_proxy_substitutes_path_params(self) -> None:
+    def test_proxy_substitutes_path_params(self) -> None:
         registry = Registry()
         writer = HTTPProxyRegistryWriter(base_url="http://localhost:8000")
 
@@ -188,7 +185,7 @@ class TestHTTPProxyRegistryWriter:
         httpx.AsyncClient = MagicMock(return_value=mock_client)
 
         try:
-            result = await module_instance.execute({"item_id": "abc"})
+            result = asyncio.run(module_instance.execute({"item_id": "abc"}))
             assert result["id"] == "abc"
 
             call_args = mock_client.request.call_args
