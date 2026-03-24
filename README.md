@@ -41,6 +41,8 @@ pip install apcore-toolkit
 | `resolve_target` | Resolves "module.path:function_name" to callable |
 | `enrich_schema_descriptions` | Merges descriptions into JSON Schema properties |
 | `get_writer` | Factory function for writer instances |
+| `DisplayResolver` | Sparse binding.yaml display overlay — resolves surface-facing alias, description, guidance, tags into `metadata["display"]` (§5.13) |
+| `ConventionScanner` | Scans a `commands/` directory of plain Python files for public functions and converts them to `ScannedModule` instances with schema inferred from type annotations (§5.14) |
 
 ## Usage
 
@@ -136,10 +138,83 @@ from apcore_toolkit import to_markdown
 md = to_markdown({"name": "Alice", "role": "admin"}, title="User Info")
 ```
 
+### Display Overlay (§5.13)
+
+`DisplayResolver` applies a sparse `binding.yaml` display overlay to a list of `ScannedModule` instances, populating `metadata["display"]` with surface-facing presentation fields (alias, description, guidance, tags) for CLI, MCP, and A2A surfaces.
+
+```python
+from apcore_toolkit.display import DisplayResolver
+
+resolver = DisplayResolver()
+
+# Apply overlay from a directory of *.binding.yaml files
+modules = resolver.resolve(scanned_modules, binding_path="bindings/")
+
+# Or from a pre-parsed dict
+modules = resolver.resolve(
+    scanned_modules,
+    binding_data={
+        "bindings": [
+            {
+                "module_id": "product.get",
+                "display": {
+                    "alias": "product-get",
+                    "description": "Get a product by ID",
+                    "cli": {"alias": "get-product"},
+                    "mcp": {"alias": "get_product"},
+                },
+            }
+        ]
+    },
+)
+
+# Resolved fields are in metadata["display"]
+mod = modules[0]
+print(mod.metadata["display"]["cli"]["alias"])   # "get-product"
+print(mod.metadata["display"]["mcp"]["alias"])   # "get_product"
+print(mod.metadata["display"]["a2a"]["alias"])   # "product-get"
+```
+
+**Resolution chain** (per field): surface-specific override > `display` default > binding-level field > scanner value.
+
+**MCP alias constraints**: automatically sanitized (non-`[a-zA-Z0-9_-]` chars replaced with `_`; leading digit prefixed with `_`); raises `ValueError` if result exceeds 64 characters.
+
+**CLI alias validation**: warns and falls back to `display.alias` when a user-explicitly-set alias does not match `^[a-z][a-z0-9_-]*$`.
+
+### Convention Module Discovery (§5.14)
+
+`ConventionScanner` scans a directory of plain Python files for public functions and converts them to `ScannedModule` instances. No decorators, no base classes, no imports from apcore -- just functions with type hints.
+
+```python
+from apcore_toolkit import ConventionScanner
+
+scanner = ConventionScanner()
+modules = scanner.scan(commands_dir="commands/")
+
+# Each public function becomes a module:
+#   commands/deploy.py  ->  deploy.deploy
+#   commands/deploy.py  ->  deploy.rollback  (if rollback() exists)
+```
+
+Module-level constants customize behavior:
+
+```python
+# commands/deploy.py
+MODULE_PREFIX = "ops"       # override file-based prefix -> ops.deploy
+CLI_GROUP = "operations"    # group hint for CLI surface
+TAGS = ["infra", "deploy"]  # tags stored in metadata
+
+def deploy(env: str, tag: str = "latest") -> dict:
+    """Deploy the app to the given environment."""
+    return {"status": "deployed", "env": env}
+```
+
+Input and output schemas are inferred from PEP 484 type annotations. Use `include` / `exclude` regex filters to control which module IDs are registered.
+
 ## Requirements
 
 - Python >= 3.11
-- apcore >= 0.13.0
+- apcore >= 0.13.1
 - pydantic >= 2.0
 - PyYAML >= 6.0
 

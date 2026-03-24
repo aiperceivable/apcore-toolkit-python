@@ -6,6 +6,7 @@ Public API re-exports for convenient access to core types and utilities.
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
 from apcore_toolkit.ai_enhancer import AIEnhancer, Enhancer
+from apcore_toolkit.display import DisplayResolver
 from apcore_toolkit.formatting import to_markdown
 from apcore_toolkit.openapi import (
     extract_input_schema,
@@ -29,6 +30,7 @@ from apcore_toolkit.output.verifiers import (
 )
 from apcore_toolkit.output.yaml_writer import YAMLWriter
 from apcore_toolkit.pydantic_utils import flatten_pydantic_params, resolve_target
+from apcore_toolkit.convention_scanner import ConventionScanner
 from apcore_toolkit.scanner import BaseScanner
 from apcore_toolkit.schema_utils import enrich_schema_descriptions
 from apcore_toolkit.serializers import annotations_to_dict, module_to_dict, modules_to_dicts
@@ -41,7 +43,9 @@ except PackageNotFoundError:
 
 __all__ = [
     "AIEnhancer",
+    "DisplayResolver",
     "BaseScanner",
+    "ConventionScanner",
     "HTTPProxyRegistryWriter",
     "Enhancer",
     "JSONVerifier",
