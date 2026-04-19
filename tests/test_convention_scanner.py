@@ -1,5 +1,7 @@
 """Tests for ConventionScanner (§5.14)."""
 
+import sys
+
 import pytest
 from unittest.mock import patch
 from apcore_toolkit.convention_scanner import ConventionScanner
@@ -118,6 +120,39 @@ class TestConventionScannerBasic:
         (tmp_path / "f.py").write_text('def func(x: str):\n    """F."""\n    pass\n')
         modules = scanner.scan(tmp_path)
         assert modules[0].output_schema == {}
+
+
+class TestConventionScannerSysPathIsolation:
+    """Verify scan() does not leak sys.path mutations across calls."""
+
+    def test_sys_path_restored_after_successful_scan(self, scanner, tmp_path):
+        (tmp_path / "ok.py").write_text('def fn(x: str) -> str:\n    """OK."""\n    return x\n')
+        before = list(sys.path)
+        scanner.scan(tmp_path)
+        assert sys.path == before
+
+    def test_sys_path_restored_when_scanned_module_mutates_it(self, scanner, tmp_path):
+        """A scanned module that itself appends to sys.path must not leak the entry."""
+        (tmp_path / "greedy.py").write_text(
+            "import sys\n"
+            "sys.path.append('/tmp/apcore-toolkit-should-not-leak')\n"
+            'def fn(x: str) -> str:\n    """Greedy."""\n    return x\n'
+        )
+        before = list(sys.path)
+        scanner.scan(tmp_path)
+        assert sys.path == before
+        assert "/tmp/apcore-toolkit-should-not-leak" not in sys.path
+
+    def test_sys_path_restored_when_scanned_module_raises(self, scanner, tmp_path):
+        """A scanned module raising at import time must still not leak sys.path."""
+        (tmp_path / "broken.py").write_text("raise RuntimeError('boom at import')\n")
+        (tmp_path / "ok.py").write_text('def fn(x: str) -> str:\n    """OK."""\n    return x\n')
+        before = list(sys.path)
+        modules = scanner.scan(tmp_path)
+        # ok.py still scanned successfully despite broken.py import failure.
+        assert len(modules) == 1
+        assert modules[0].module_id == "ok.fn"
+        assert sys.path == before
 
 
 class TestConventionScannerFilterDelegation:

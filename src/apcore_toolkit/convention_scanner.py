@@ -89,16 +89,19 @@ class ConventionScanner:
             return []
 
         mod = importlib.util.module_from_spec(spec)
-        # Add parent directory to sys.path temporarily for imports
+        # Snapshot sys.path so any mutation during exec_module — either the
+        # entry we add or entries the scanned module itself appends — is
+        # fully reverted. Append (not insert) the parent directory so real
+        # installed packages keep precedence and a shadow module next to
+        # the command file cannot hijack imports during scanning.
         parent = str(py_file.parent)
-        added_path = parent not in sys.path
-        if added_path:
-            sys.path.insert(0, parent)
+        sys_path_snapshot = sys.path[:]
+        if parent not in sys.path:
+            sys.path.append(parent)
         try:
             spec.loader.exec_module(mod)
         finally:
-            if added_path and parent in sys.path:
-                sys.path.remove(parent)
+            sys.path[:] = sys_path_snapshot
 
         # Read module-level constants
         module_prefix = getattr(mod, "MODULE_PREFIX", None)
