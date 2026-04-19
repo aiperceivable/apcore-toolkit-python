@@ -65,8 +65,10 @@ class ConventionScanner:
             try:
                 file_modules = self._scan_file(py_file, commands_path)
                 modules.extend(file_modules)
-            except Exception as exc:
-                logger.warning("ConventionScanner: failed to scan %s: %s", py_file, exc)
+            except Exception:
+                # exc_info=True preserves the traceback so operators can locate
+                # the offending line in user code, not just the exception message.
+                logger.warning("ConventionScanner: failed to scan %s", py_file, exc_info=True)
 
         # Apply include/exclude filters — delegate to BaseScanner.filter_modules
         # (a @staticmethod) to avoid parallel implementations that can diverge
@@ -153,7 +155,12 @@ class ConventionScanner:
         """Build JSON Schema from function parameter type hints."""
         try:
             hints = get_type_hints(func)
-        except Exception:
+        except (NameError, TypeError) as exc:
+            # Unresolved forward refs (NameError) and invalid annotations
+            # (TypeError) are the documented failure modes. Narrower than
+            # `except Exception` so genuinely unexpected errors propagate
+            # to scan()'s logger.warning(exc_info=True).
+            logger.debug("ConventionScanner: get_type_hints failed for %s: %s", func, exc)
             hints = {}
 
         sig = inspect.signature(func)
@@ -184,7 +191,8 @@ class ConventionScanner:
         """Build output schema from return type hint."""
         try:
             hints = get_type_hints(func)
-        except Exception:
+        except (NameError, TypeError) as exc:
+            logger.debug("ConventionScanner: get_type_hints failed for %s: %s", func, exc)
             return {}
 
         ret = hints.get("return")

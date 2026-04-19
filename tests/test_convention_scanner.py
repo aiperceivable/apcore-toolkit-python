@@ -1,5 +1,6 @@
 """Tests for ConventionScanner (§5.14)."""
 
+import logging
 import sys
 
 import pytest
@@ -120,6 +121,26 @@ class TestConventionScannerBasic:
         (tmp_path / "f.py").write_text('def func(x: str):\n    """F."""\n    pass\n')
         modules = scanner.scan(tmp_path)
         assert modules[0].output_schema == {}
+
+
+class TestConventionScannerFailureLogging:
+    """Verify scan() preserves traceback context on per-file failures."""
+
+    def test_import_failure_log_includes_traceback(self, scanner, tmp_path, caplog):
+        (tmp_path / "broken.py").write_text(
+            "def _bang():\n    raise RuntimeError('kaboom at import')\n\n_bang()\n"
+        )
+        with caplog.at_level(logging.WARNING, logger="apcore_toolkit"):
+            scanner.scan(tmp_path)
+
+        failure_records = [r for r in caplog.records if "failed to scan" in r.getMessage()]
+        assert len(failure_records) == 1
+        record = failure_records[0]
+        # exc_info must be populated so operators see *where* the failure
+        # originated, not just str(exc).
+        assert record.exc_info is not None
+        assert record.exc_info[0] is RuntimeError
+        assert "kaboom at import" in str(record.exc_info[1])
 
 
 class TestConventionScannerSysPathIsolation:
