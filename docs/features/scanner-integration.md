@@ -170,7 +170,12 @@ class ScannedModule:
     examples: list[ModuleExample] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # Added in v0.5.0 (appended to avoid breaking positional construction
+    # patterns established in earlier releases).
+    display: dict[str, Any] | None = None
 ```
+
+**`display` field**: A sparse display overlay persisted to binding YAML alongside `suggested_alias`. Holds per-surface overrides (alias, description, cli/mcp/a2a sections). Distinct from `metadata["display"]`, which holds the *resolved* form produced by `DisplayResolver` after the full resolve chain runs. Scanners may set this directly for static overrides; most callers leave it as `None` and let `DisplayResolver` populate `metadata["display"]` at resolve time.
 
 ### 3.3 Field Placement
 
