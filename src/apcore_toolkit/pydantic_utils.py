@@ -10,14 +10,22 @@ from __future__ import annotations
 import functools
 import importlib
 import inspect
+import logging
 import typing
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger("apcore_toolkit")
+
 
 def resolve_target(target: str) -> Any:
     """Resolve a ``module.path:qualname`` target string to a callable.
+
+    ``qualname`` may be a single identifier (``my_func``) or a dotted
+    path (``MyClass.my_method``) — the resolver walks segments via
+    repeated ``getattr``, matching Python's own ``__qualname__``
+    convention for nested callables.
 
     Args:
         target: Target string in ``module.path:qualname`` format.
@@ -27,14 +35,16 @@ def resolve_target(target: str) -> Any:
 
     Raises:
         ImportError: If the module cannot be imported.
-        AttributeError: If the qualified name cannot be resolved.
+        AttributeError: If any segment of the qualified name cannot be resolved.
         ValueError: If the target format is invalid.
     """
     if ":" not in target:
         raise ValueError(f"Invalid target format: {target!r}. Expected 'module.path:qualname'.")
     module_path, _, qualname = target.rpartition(":")
-    mod = importlib.import_module(module_path)
-    return getattr(mod, qualname)
+    obj: Any = importlib.import_module(module_path)
+    for part in qualname.split("."):
+        obj = getattr(obj, part)
+    return obj
 
 
 def flatten_pydantic_params(func: Any) -> Any:
@@ -53,7 +63,15 @@ def flatten_pydantic_params(func: Any) -> Any:
     """
     try:
         hints = typing.get_type_hints(func, include_extras=True)
-    except Exception:
+    except (NameError, TypeError) as exc:
+        # Unresolved forward refs (NameError) and invalid annotations
+        # (TypeError) are the documented get_type_hints failure modes:
+        # treat them as "no flattening possible" and return the original
+        # callable. Other exceptions (ImportError, RuntimeError, …) are
+        # genuine bugs and must propagate — silently swallowing them
+        # produces confusing 'missing keyword argument' errors at call
+        # time instead of pointing at the real failure.
+        logger.debug("flatten_pydantic_params: get_type_hints failed for %s: %s", func, exc)
         return func
 
     sig = inspect.signature(func)

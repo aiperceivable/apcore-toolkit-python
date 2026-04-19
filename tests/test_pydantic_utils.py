@@ -136,3 +136,42 @@ class TestResolveTarget:
         module_path, _, qualname = "node:path:join".rpartition(":")
         assert module_path == "node:path"
         assert qualname == "join"
+
+    def test_dotted_qualname(self) -> None:
+        """A dotted qualname (e.g., class.method) must resolve via repeated getattr."""
+        # urllib.parse.ParseResult is a class; ._replace is a method bound to it.
+        from urllib.parse import ParseResult
+
+        result = resolve_target("urllib.parse:ParseResult._replace")
+        assert result is ParseResult._replace
+
+    def test_dotted_qualname_missing_leaf(self) -> None:
+        """AttributeError must propagate when the final segment of a dotted qualname is missing."""
+        with pytest.raises(AttributeError):
+            resolve_target("urllib.parse:ParseResult.nonexistent_method")
+
+
+class TestFlattenPydanticParamsErrorSurface:
+    """Narrowed exception handling in flatten_pydantic_params."""
+
+    def test_unexpected_exception_from_get_type_hints_propagates(self, monkeypatch) -> None:
+        """A non-(NameError, TypeError) failure from get_type_hints must NOT be swallowed.
+
+        Before this fix, `except Exception: return func` silently returned the
+        unwrapped callable, which then failed later with confusing
+        'missing keyword argument' errors. The narrowed handler restores the
+        original exception as the caller's responsibility.
+        """
+        import typing
+
+        original_get_type_hints = typing.get_type_hints
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("synthetic internal error")
+
+        monkeypatch.setattr(typing, "get_type_hints", _boom)
+        with pytest.raises(RuntimeError, match="synthetic internal error"):
+            flatten_pydantic_params(pydantic_func)
+
+        # Sanity: the monkeypatch scope does not leak.
+        monkeypatch.setattr(typing, "get_type_hints", original_get_type_hints)
