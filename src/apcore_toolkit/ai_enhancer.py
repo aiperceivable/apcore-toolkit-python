@@ -185,15 +185,13 @@ class AIEnhancer:
                 results.append(module)
                 pending.append((idx, module, gaps))
 
-        # Process pending modules in batches
-        for batch_start in range(0, len(pending), self.batch_size):
-            batch = pending[batch_start : batch_start + self.batch_size]
-            for idx, module, gaps in batch:
-                try:
-                    enhanced = self._enhance_module(module, gaps)
-                    results[idx] = enhanced
-                except Exception:
-                    logger.warning("AI enhancement failed for %s, keeping original", module.module_id, exc_info=True)
+        # TODO: coalesce batch_size modules into a single API call to reduce round-trips
+        for idx, module, gaps in pending:
+            try:
+                enhanced = self._enhance_module(module, gaps)
+                results[idx] = enhanced
+            except Exception:
+                logger.error("AI enhancement failed for %s, keeping original", module.module_id, exc_info=True)
 
         return results
 
