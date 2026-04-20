@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 http-proxy = ["httpx>=0.24"]
+json-schema = ["jsonschema>=4.0"]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",

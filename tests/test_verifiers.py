@@ -339,3 +339,31 @@ class TestRegistryWriterWithVerifiers:
                 )
         assert results[0].verified is False
         assert results[0].verification_error == "registry rejected"
+
+
+# ---------------------------------------------------------------------------
+# OSError / UnicodeDecodeError handling (regression for missing error guards)
+# ---------------------------------------------------------------------------
+class TestVerifierIOErrors:
+    def test_yaml_verifier_missing_file(self, tmp_path):
+        r = YAMLVerifier().verify(str(tmp_path / "nonexistent.yaml"), "m")
+        assert r.ok is False
+        assert "Cannot read" in r.error
+
+    def test_syntax_verifier_missing_file(self, tmp_path):
+        r = SyntaxVerifier().verify(str(tmp_path / "nonexistent.py"), "m")
+        assert r.ok is False
+        assert "Cannot read" in r.error
+
+    def test_json_verifier_missing_file(self, tmp_path):
+        r = JSONVerifier().verify(str(tmp_path / "nonexistent.json"), "m")
+        assert r.ok is False
+        assert "Cannot read" in r.error
+
+    def test_yaml_verifier_non_dict_binding_entry(self, tmp_path):
+        """bindings[0] that is not a dict must return an error, not AttributeError."""
+        f = tmp_path / "test.yaml"
+        f.write_text(yaml.dump({"bindings": ["not-a-dict"]}))
+        r = YAMLVerifier().verify(str(f), "m")
+        assert r.ok is False
+        assert "mapping" in r.error.lower()

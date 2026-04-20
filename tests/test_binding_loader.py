@@ -321,3 +321,28 @@ class TestRoundTrip:
         YAMLWriter().write([original], str(tmp_path))
         loaded = BindingLoader().load(tmp_path)
         assert loaded[0].suggested_alias is None
+
+
+class TestMalformedFieldTypes:
+    """Malformed field types must raise BindingLoadError, not bare TypeError."""
+
+    def test_input_schema_string_raises_binding_load_error(self, loader: BindingLoader) -> None:
+        data = {"bindings": [{"module_id": "x", "target": "m:f", "input_schema": "not-a-dict"}]}
+        with pytest.raises(BindingLoadError, match="input_schema"):
+            loader.load_data(data)
+
+    def test_output_schema_int_raises_binding_load_error(self, loader: BindingLoader) -> None:
+        data = {"bindings": [{"module_id": "x", "target": "m:f", "output_schema": 42}]}
+        with pytest.raises(BindingLoadError, match="output_schema"):
+            loader.load_data(data)
+
+    def test_tags_string_raises_binding_load_error(self, loader: BindingLoader) -> None:
+        data = {"bindings": [{"module_id": "x", "target": "m:f", "tags": "not-a-list"}]}
+        with pytest.raises(BindingLoadError, match="tags"):
+            loader.load_data(data)
+
+    def test_error_carries_module_id(self, loader: BindingLoader) -> None:
+        data = {"bindings": [{"module_id": "my.module", "target": "m:f", "input_schema": "oops"}]}
+        with pytest.raises(BindingLoadError) as exc_info:
+            loader.load_data(data)
+        assert exc_info.value.module_id == "my.module"

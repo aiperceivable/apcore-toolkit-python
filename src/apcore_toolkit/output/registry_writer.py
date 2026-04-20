@@ -61,8 +61,24 @@ class RegistryWriter:
             if dry_run:
                 results.append(WriteResult(module_id=mod.module_id))
                 continue
-            fm = self._to_function_module(mod)
-            registry.register(mod.module_id, fm)
+            try:
+                fm = self._to_function_module(mod)
+                registry.register(mod.module_id, fm)
+            except Exception as exc:
+                logger.warning(
+                    "RegistryWriter: failed to register %s: %s",
+                    mod.module_id,
+                    exc,
+                    exc_info=True,
+                )
+                results.append(
+                    WriteResult(
+                        module_id=mod.module_id,
+                        verified=False,
+                        verification_error=f"{type(exc).__name__}: {exc}",
+                    )
+                )
+                continue
             logger.debug("Registered module: %s", mod.module_id)
 
             result = WriteResult(module_id=mod.module_id)

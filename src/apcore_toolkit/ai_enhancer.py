@@ -111,6 +111,13 @@ class AIEnhancer:
         timeout: int | None = None,
     ) -> None:
         self.endpoint = endpoint or os.environ.get("APCORE_AI_ENDPOINT", _DEFAULT_ENDPOINT)
+        from urllib.parse import urlparse as _urlparse
+
+        _parsed = _urlparse(self.endpoint)
+        if _parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"APCORE_AI_ENDPOINT must use http or https scheme, got: {self.endpoint!r}"
+            )
         self.model = model or os.environ.get("APCORE_AI_MODEL", _DEFAULT_MODEL)
         self.threshold = (
             threshold if threshold is not None else self._parse_float_env("APCORE_AI_THRESHOLD", _DEFAULT_THRESHOLD)
@@ -233,7 +240,17 @@ class AIEnhancer:
             """Apply a simple scalar field from parsed SLM output if confidence is sufficient."""
             if field not in gaps or field not in parsed:
                 return
-            field_conf: float = confidence_parsed.get(field, 0.0)
+            raw_conf = confidence_parsed.get(field, 0.0)
+            if not isinstance(raw_conf, (int, float)) or isinstance(raw_conf, bool):
+                logger.warning(
+                    "Module '%s': non-numeric confidence for %r (%r) — treating as 0.0",
+                    module.module_id,
+                    field,
+                    raw_conf,
+                )
+                field_conf: float = 0.0
+            else:
+                field_conf = float(raw_conf)
             confidence[field] = field_conf
             if field_conf >= self.threshold:
                 updates[field] = parsed[field]
@@ -252,7 +269,19 @@ class AIEnhancer:
             for field_name, validate in _ANNOTATION_FIELD_VALIDATORS.items():
                 if field_name not in ann_data or not validate(ann_data[field_name]):
                     continue
-                field_conf = confidence_parsed.get(f"annotations.{field_name}", confidence_parsed.get(field_name, 0.0))
+                raw_ann_conf = confidence_parsed.get(
+                    f"annotations.{field_name}", confidence_parsed.get(field_name, 0.0)
+                )
+                if not isinstance(raw_ann_conf, (int, float)) or isinstance(raw_ann_conf, bool):
+                    logger.warning(
+                        "Module '%s': non-numeric confidence for 'annotations.%s' (%r) — treating as 0.0",
+                        module.module_id,
+                        field_name,
+                        raw_ann_conf,
+                    )
+                    field_conf = 0.0
+                else:
+                    field_conf = float(raw_ann_conf)
                 confidence[f"annotations.{field_name}"] = field_conf
                 if field_conf >= self.threshold:
                     accepted[field_name] = ann_data[field_name]
@@ -384,6 +413,9 @@ class AIEnhancer:
             text = "\n".join(lines)
 
         try:
-            return json.loads(text)
+            result = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ValueError(f"SLM returned invalid JSON: {exc}") from exc
+        if not isinstance(result, dict):
+            raise ValueError(f"SLM returned non-dict JSON ({type(result).__name__}); expected a JSON object")
+        return result

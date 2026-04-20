@@ -94,7 +94,7 @@ class YAMLWriter:
                 "# Do not edit manually unless you intend"
                 " to customize schemas.\n\n"
             )
-            yaml_content = yaml.dump(binding_data, default_flow_style=False, sort_keys=False)
+            yaml_content = yaml.safe_dump(binding_data, default_flow_style=False, sort_keys=False)
             try:
                 file_path.write_text(header + yaml_content, encoding="utf-8")
             except OSError as exc:

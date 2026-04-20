@@ -35,3 +35,15 @@ class TestGetWriter:
     def test_unknown_format_message(self) -> None:
         with pytest.raises(ValueError, match="'json'"):
             get_writer("json")
+
+    def test_yaml_rejects_unexpected_kwargs(self) -> None:
+        with pytest.raises(TypeError, match="YAMLWriter"):
+            get_writer("yaml", base_url="http://localhost")
+
+    def test_python_rejects_unexpected_kwargs(self) -> None:
+        with pytest.raises(TypeError, match="PythonWriter"):
+            get_writer("python", timeout=5)
+
+    def test_registry_rejects_unexpected_kwargs(self) -> None:
+        with pytest.raises(TypeError, match="RegistryWriter"):
+            get_writer("registry", extra="ignored")

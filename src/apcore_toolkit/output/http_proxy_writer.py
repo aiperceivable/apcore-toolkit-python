@@ -54,12 +54,16 @@ def _get_http_fields(mod: Any) -> tuple[str, str]:
     http_method = getattr(mod, "http_method", None)
     if not http_method:
         http_method = metadata.get("http_method", "GET")
-    if not http_method:
-        raise ValueError(f"empty http_method for {mod.module_id!r}")
     url_path = getattr(mod, "url_path", None)
     if not url_path:
         url_path = metadata.get("url_path", "/") or "/"
-    return str(http_method), str(url_path)
+    url_path = str(url_path)
+    if url_path.startswith(("http://", "https://", "file://", "ftp://")):
+        raise ValueError(
+            f"url_path must be a relative path, not an absolute URL: {url_path!r} "
+            f"(module: {mod.module_id!r})"
+        )
+    return str(http_method), url_path
 
 
 class HTTPProxyRegistryWriter:
@@ -137,9 +141,16 @@ class HTTPProxyRegistryWriter:
             output_schema = raw_output
             description = mod.description
             documentation = mod.documentation
+            # Shared client — created lazily on first execute(), reused across calls
+            # for connection pooling. Each ProxyModule class has its own client
+            # bound to its base_url/timeout.
+            _client: Any = None
 
             async def execute(self, inputs: dict[str, Any], ctx: Any = None) -> dict[str, Any]:
                 import httpx as _httpx
+
+                if ProxyModule._client is None:
+                    ProxyModule._client = _httpx.AsyncClient(base_url=base_url, timeout=timeout)
 
                 headers: dict[str, str] = {}
                 if auth_factory is not None:
@@ -165,12 +176,17 @@ class HTTPProxyRegistryWriter:
                     if http_method in _BODY_METHODS:
                         kwargs["json"] = non_path
                     else:
+                        if any(isinstance(v, (dict, list)) for v in non_path.values()):
+                            logger.warning(
+                                "HTTPProxyRegistryWriter: %s %s has nested dict/list params "
+                                "that will be str()-serialized in the query string",
+                                http_method,
+                                url_path,
+                            )
                         kwargs["params"] = non_path
 
-                transport = _httpx.AsyncHTTPTransport(retries=0)
                 try:
-                    async with _httpx.AsyncClient(transport=transport, base_url=base_url, timeout=timeout) as client:
-                        resp = await client.request(http_method, actual_path, headers=headers, **kwargs)
+                    resp = await ProxyModule._client.request(http_method, actual_path, headers=headers, **kwargs)
                 except _httpx.HTTPError as exc:
                     raise ModuleError(
                         code=ErrorCodes.MODULE_EXECUTE_ERROR,

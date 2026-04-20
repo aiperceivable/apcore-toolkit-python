@@ -28,6 +28,7 @@ logger = logging.getLogger("apcore_toolkit")
 _TYPE_MAP: dict[str, str] = JSON_SCHEMA_TO_PYTHON
 
 _MODULE_PATH_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$")
+_MODULE_ID_SAFE_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
 
 class PythonWriter:
@@ -108,6 +109,11 @@ class PythonWriter:
 
     def _generate_code(self, module: ScannedModule, timestamp: str) -> str:
         """Generate Python code for a single ScannedModule."""
+        if not _MODULE_ID_SAFE_RE.match(module.module_id):
+            raise ValueError(
+                f"module_id contains characters unsafe for code generation: {module.module_id!r}. "
+                "Only [a-zA-Z0-9_.-] are allowed."
+            )
         func_name = self._sanitize_identifier(module.module_id.split(".")[-1])
 
         if ":" not in module.target:

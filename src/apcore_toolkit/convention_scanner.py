@@ -243,5 +243,9 @@ class ConventionScanner:
         if origin is dict:
             return {"type": "object"}
 
-        # Fallback
-        return {"type": "string"}
+        # Unknown annotated type — empty schema; caller gets no type constraint.
+        logger.warning(
+            "ConventionScanner: unknown type annotation %r — using empty schema",
+            type_hint,
+        )
+        return {}

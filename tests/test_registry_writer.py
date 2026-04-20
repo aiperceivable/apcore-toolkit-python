@@ -107,3 +107,29 @@ class TestGetWriterRegistry:
 
         writer = get_writer("registry")
         assert isinstance(writer, RegistryWriter)
+
+
+class TestRegistryWriterBatchResilience:
+    """A registration error on one module must not abort subsequent modules."""
+
+    def test_error_on_first_continues_to_second(
+        self, writer: RegistryWriter, mock_registry: MagicMock
+    ) -> None:
+        mod_a = ScannedModule(module_id="a.func", description="", input_schema={}, output_schema={}, tags=[], target="m:f")
+        mod_b = ScannedModule(module_id="b.func", description="", input_schema={}, output_schema={}, tags=[], target="m:f")
+        with patch.object(writer, "_to_function_module") as mock_to_fm:
+            mock_to_fm.side_effect = [RuntimeError("collision"), MagicMock()]
+            results = writer.write([mod_a, mod_b], mock_registry)
+        assert len(results) == 2
+        assert results[0].verified is False
+        assert "RuntimeError" in results[0].verification_error
+        assert results[1].verified is True
+
+    def test_registry_register_error_recorded_not_raised(
+        self, writer: RegistryWriter, mock_registry: MagicMock, sample_module: ScannedModule
+    ) -> None:
+        mock_registry.register.side_effect = RuntimeError("duplicate")
+        with patch.object(writer, "_to_function_module", return_value=MagicMock()):
+            results = writer.write([sample_module], mock_registry)
+        assert results[0].verified is False
+        assert "duplicate" in results[0].verification_error

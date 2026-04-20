@@ -42,10 +42,16 @@ def get_writer(
         ValueError: If the format is not recognized.
     """
     if output_format == "yaml":
+        if kwargs:
+            raise TypeError(f"YAMLWriter accepts no keyword arguments, got: {sorted(kwargs)}")
         return YAMLWriter()
     if output_format == "python":
+        if kwargs:
+            raise TypeError(f"PythonWriter accepts no keyword arguments, got: {sorted(kwargs)}")
         return PythonWriter()
     if output_format == "registry":
+        if kwargs:
+            raise TypeError(f"RegistryWriter accepts no keyword arguments, got: {sorted(kwargs)}")
         return RegistryWriter()
     if output_format == "http-proxy":
         from apcore_toolkit.output.http_proxy_writer import HTTPProxyRegistryWriter

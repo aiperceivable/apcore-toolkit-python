@@ -125,6 +125,36 @@ class TestExamplesField:
         assert b.examples == []
 
 
+class TestDisplayField:
+    def _make_base_module(self, **overrides: Any) -> ScannedModule:
+        defaults: dict[str, Any] = {
+            "module_id": "tasks.user_data.post",
+            "description": "Create task data",
+            "input_schema": {"type": "object", "properties": {}},
+            "output_schema": {"type": "object", "properties": {}},
+            "tags": [],
+            "target": "mod:func",
+        }
+        defaults.update(overrides)
+        return ScannedModule(**defaults)
+
+    def test_display_default_is_none(self) -> None:
+        mod = self._make_base_module()
+        assert mod.display is None
+
+    def test_display_set_via_constructor(self) -> None:
+        mod = self._make_base_module(display={"cli": {"group": "ops"}})
+        assert mod.display == {"cli": {"group": "ops"}}
+
+    def test_display_independent_of_metadata_display(self) -> None:
+        mod = self._make_base_module(
+            display={"cli": {"group": "ops"}},
+            metadata={"display": {"cli": {"group": "infra"}}},
+        )
+        assert mod.display == {"cli": {"group": "ops"}}
+        assert mod.metadata["display"] == {"cli": {"group": "infra"}}
+
+
 class TestSuggestedAlias:
     def _make_base_module(self, **overrides: Any) -> ScannedModule:
         defaults: dict[str, Any] = {

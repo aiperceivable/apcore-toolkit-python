@@ -142,6 +142,9 @@ def flatten_pydantic_params(func: Any) -> Any:
             model_data = {k: remaining.pop(k) for k in list(remaining) if k in model_field_names}
             call_kwargs[param_name] = model_cls(**model_data)
 
+        if remaining:
+            raise TypeError(f"Unexpected keyword arguments: {sorted(remaining)}")
+
         return func(**call_kwargs)
 
     wrapper.__signature__ = inspect.Signature(flat_params)  # type: ignore[attr-defined]

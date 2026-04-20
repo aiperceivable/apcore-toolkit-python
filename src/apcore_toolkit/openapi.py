@@ -6,7 +6,10 @@ scanner can use them without subclassing.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger("apcore_toolkit")
 
 
 def resolve_ref(ref_string: str, openapi_doc: dict[str, Any]) -> dict[str, Any]:
@@ -59,6 +62,10 @@ def _deep_resolve_refs(
     Depth-limited to 16 levels to prevent infinite recursion.
     """
     if _depth > 16:
+        logger.warning(
+            "_deep_resolve_refs: depth limit (16) reached — possible circular $ref chain near %r",
+            schema.get("$ref", schema.get("title", "<unknown>")),
+        )
         return schema
 
     if "$ref" in schema:
@@ -143,12 +150,24 @@ def extract_input_schema(
     # Request body
     request_body = operation.get("requestBody", {})
     content = request_body.get("content", {})
-    json_content = content.get("application/json", {})
+    json_content = {}
+    for ct, ct_content in content.items():
+        if ct.startswith("application/json") or ct == "application/vnd.api+json":
+            json_content = ct_content
+            break
     body_schema = json_content.get("schema", {})
     if body_schema:
         body_schema = resolve_schema(body_schema, openapi_doc)
-        schema["properties"].update(body_schema.get("properties", {}))
-        schema["required"].extend(body_schema.get("required", []))
+        for name, prop in body_schema.get("properties", {}).items():
+            if name in schema["properties"]:
+                logger.warning(
+                    "extract_input_schema: body field %r conflicts with path/query param — body wins",
+                    name,
+                )
+            schema["properties"][name] = prop
+        for req in body_schema.get("required", []):
+            if req not in schema["required"]:
+                schema["required"].append(req)
 
     # Recursively resolve $ref inside individual properties
     if openapi_doc:
@@ -172,10 +191,14 @@ def extract_output_schema(
         The output JSON Schema dict, or a default empty object schema.
     """
     responses = operation.get("responses", {})
-    for status_code in ("200", "201"):
+    for status_code in ("200", "201", "202", "203"):
         response = responses.get(status_code, {})
         content = response.get("content", {})
-        json_content = content.get("application/json", {})
+        json_content: dict[str, Any] = {}
+        for ct, ct_content in content.items():
+            if ct.startswith("application/json") or ct == "application/vnd.api+json":
+                json_content = ct_content
+                break
         if "schema" in json_content:
             schema: dict[str, Any] = json_content["schema"]
             schema = resolve_schema(schema, openapi_doc)

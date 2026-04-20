@@ -25,6 +25,8 @@ class YAMLVerifier:
         try:
             with open(path, encoding="utf-8") as f:
                 parsed = yaml.safe_load(f)
+        except (OSError, UnicodeDecodeError) as exc:
+            return VerifyResult(ok=False, error=f"Cannot read file: {exc}")
         except yaml.YAMLError as exc:
             return VerifyResult(ok=False, error=f"Invalid YAML: {exc}")
 
@@ -36,6 +38,8 @@ class YAMLVerifier:
             return VerifyResult(ok=False, error="Missing or empty 'bindings' list")
 
         first = bindings[0]
+        if not isinstance(first, dict):
+            return VerifyResult(ok=False, error="First binding entry is not a mapping")
         for field in ("module_id", "target"):
             if not first.get(field):
                 return VerifyResult(ok=False, error=f"Missing required field '{field}' in binding")
@@ -51,6 +55,8 @@ class SyntaxVerifier:
             with open(path, encoding="utf-8") as f:
                 source = f.read()
             ast.parse(source, filename=path)
+        except (OSError, UnicodeDecodeError) as exc:
+            return VerifyResult(ok=False, error=f"Cannot read file: {exc}")
         except SyntaxError as exc:
             return VerifyResult(ok=False, error=f"Invalid Python syntax: {exc}")
         return VerifyResult(ok=True)
@@ -119,6 +125,8 @@ class JSONVerifier:
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
+        except (OSError, UnicodeDecodeError) as exc:
+            return VerifyResult(ok=False, error=f"Cannot read file: {exc}")
         except json.JSONDecodeError as exc:
             return VerifyResult(ok=False, error=f"Invalid JSON: {exc}")
 
@@ -157,6 +165,7 @@ def run_verifier_chain(
         try:
             result = verifier.verify(path, module_id)
         except Exception as exc:
+            logger.debug("Verifier %s crashed: %s", type(verifier).__name__, exc, exc_info=True)
             return VerifyResult(ok=False, error=f"Verifier crashed: {exc}")
         if not result.ok:
             return result

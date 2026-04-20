@@ -273,6 +273,18 @@ class TestTypeToSchema:
         schema = modules[0].input_schema["properties"]["x"]
         assert schema.get("type") != "string"
 
+    def test_unknown_annotated_type_returns_empty_schema(self, scanner, tmp_path):
+        """Unknown annotated types (datetime, Enum, etc.) must produce {} not {"type":"string"}."""
+        (tmp_path / "f.py").write_text(
+            "from datetime import datetime\n"
+            "def fn(x: datetime) -> dict:\n"
+            '    """F."""\n'
+            "    return {}\n"
+        )
+        modules = scanner.scan(tmp_path)
+        schema = modules[0].input_schema["properties"]["x"]
+        assert schema == {}, f"Expected empty schema for unknown type, got {schema!r}"
+
 
 class TestTAGSShapeGuard:
     """TAGS module-level constant: non-list value must not silently corrupt tags."""

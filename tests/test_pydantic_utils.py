@@ -175,3 +175,15 @@ class TestFlattenPydanticParamsErrorSurface:
 
         # Sanity: the monkeypatch scope does not leak.
         monkeypatch.setattr(typing, "get_type_hints", original_get_type_hints)
+
+
+class TestFlattenPydanticUnknownKwargs:
+    """Unknown kwargs must raise TypeError instead of being silently discarded."""
+
+    def test_unknown_kwarg_raises_type_error(self) -> None:
+        def f(body: TaskCreate) -> str:
+            return body.title
+
+        wrapped = flatten_pydantic_params(f)
+        with pytest.raises(TypeError, match="Unexpected keyword arguments"):
+            wrapped(title="t", bogus_field="x")

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import dataclasses
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -88,8 +89,14 @@ class DisplayResolver:
             return self._load_binding_files(Path(binding_path))
         return {}
 
-    def _parse_binding_data(self, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    def _parse_binding_data(self, data: Any) -> dict[str, dict[str, Any]]:
         """Parse pre-loaded binding data."""
+        if not isinstance(data, dict):
+            logger.warning(
+                "DisplayResolver: binding data is not a dict (%s) — ignoring",
+                type(data).__name__,
+            )
+            return {}
         # Accept either {"bindings": [...]} or a direct module_id → entry map
         if "bindings" in data:
             return {entry["module_id"]: entry for entry in data.get("bindings", []) if "module_id" in entry}
@@ -208,7 +215,14 @@ class DisplayResolver:
         self._validate_aliases(display, mod.module_id, cli_alias_explicit=cli_alias_explicit)
 
         new_metadata = {**(mod.metadata or {}), "display": display}
-        return replace(mod, metadata=new_metadata)
+        if dataclasses.is_dataclass(mod) and not isinstance(mod, type):
+            return replace(mod, metadata=new_metadata)
+        # Duck-typed module — update metadata attribute directly
+        try:
+            mod.metadata = new_metadata
+        except AttributeError:
+            pass
+        return mod
 
     def _validate_aliases(
         self,

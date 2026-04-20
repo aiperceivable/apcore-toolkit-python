@@ -106,6 +106,32 @@ class TestPythonWriterValidation:
         with pytest.raises(ValueError, match="Invalid module path"):
             self.writer.write([module], "/tmp/out", dry_run=True)
 
+    def test_unsafe_module_id_raises_value_error(self) -> None:
+        """module_id containing quotes must be rejected to prevent docstring injection."""
+        module = ScannedModule(
+            module_id='foo"""bar',
+            description="test",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={},
+            tags=[],
+            target="pkg.mod:func",
+        )
+        with pytest.raises(ValueError, match="unsafe"):
+            self.writer.write([module], "/tmp/out", dry_run=True)
+
+    def test_safe_module_id_passes(self) -> None:
+        """module_id with only safe characters must not raise."""
+        module = ScannedModule(
+            module_id="users.get_user",
+            description="test",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={},
+            tags=[],
+            target="pkg.mod:func",
+        )
+        results = self.writer.write([module], "/tmp/out", dry_run=True)
+        assert len(results) == 1
+
 
 class TestPythonWriterFileOutput:
     def setup_method(self) -> None:

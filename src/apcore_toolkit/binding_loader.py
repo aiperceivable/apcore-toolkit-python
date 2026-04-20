@@ -205,12 +205,34 @@ class BindingLoader:
                 missing_fields=missing,
             )
 
+        raw_input_schema = entry.get("input_schema")
+        if raw_input_schema is not None and not isinstance(raw_input_schema, dict):
+            raise BindingLoadError(
+                f"'input_schema' must be a mapping, got {type(raw_input_schema).__name__!r}",
+                file_path=file_path,
+                module_id=entry.get("module_id"),
+            )
+        raw_output_schema = entry.get("output_schema")
+        if raw_output_schema is not None and not isinstance(raw_output_schema, dict):
+            raise BindingLoadError(
+                f"'output_schema' must be a mapping, got {type(raw_output_schema).__name__!r}",
+                file_path=file_path,
+                module_id=entry.get("module_id"),
+            )
+        raw_tags = entry.get("tags")
+        if raw_tags is not None and not isinstance(raw_tags, list):
+            raise BindingLoadError(
+                f"'tags' must be a list, got {type(raw_tags).__name__!r}",
+                file_path=file_path,
+                module_id=entry.get("module_id"),
+            )
+
         return ScannedModule(
             module_id=str(entry["module_id"]),
             description=entry.get("description") or "",
-            input_schema=dict(entry.get("input_schema") or {}),
-            output_schema=dict(entry.get("output_schema") or {}),
-            tags=list(entry.get("tags") or []),
+            input_schema=dict(raw_input_schema) if raw_input_schema else {},
+            output_schema=dict(raw_output_schema) if raw_output_schema else {},
+            tags=list(raw_tags) if raw_tags else [],
             target=str(entry["target"]),
             version=str(entry.get("version") or "1.0.0"),
             annotations=self._parse_annotations(entry.get("annotations"), module_id=entry["module_id"]),
