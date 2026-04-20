@@ -1,4 +1,14 @@
-"""Convention Module Scanner — discovers plain functions as apcore modules (§5.14)."""
+"""Convention Module Scanner — discovers plain functions as apcore modules (§5.14).
+
+.. danger::
+    This module uses ``importlib.exec_module`` to load Python source files.
+    **Only point it at trusted, reviewed source directories.** Scanning an
+    untrusted or user-controlled directory is equivalent to executing arbitrary
+    Python code with full process privileges. There is no sandboxing.
+
+    If you need to introspect untrusted Python source, use an AST-only approach
+    (e.g., ``ast.parse``) instead.
+"""
 
 from __future__ import annotations
 
