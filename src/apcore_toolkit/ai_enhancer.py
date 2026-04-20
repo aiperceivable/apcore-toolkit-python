@@ -218,35 +218,41 @@ class AIEnhancer:
         confidence: dict[str, float] = {}
         warnings: list[str] = list(module.warnings)
 
-        # Apply description if above threshold
-        if "description" in gaps and "description" in parsed:
-            desc_conf = parsed.get("confidence", {}).get("description", 0.0)
-            confidence["description"] = desc_conf
-            if desc_conf >= self.threshold:
-                updates["description"] = parsed["description"]
-            else:
-                warnings.append(f"Low confidence ({desc_conf:.2f}) for description — skipped. Review manually.")
+        # Guard: SLM may return confidence as a non-dict (e.g. "high" or 1).
+        # Treat any non-dict value as absent — all fields default to 0.0.
+        confidence_raw = parsed.get("confidence")
+        if confidence_raw is not None and not isinstance(confidence_raw, dict):
+            logger.warning(
+                "Module '%s': SLM returned non-dict 'confidence' (%s) — treating as absent.",
+                module.module_id,
+                type(confidence_raw).__name__,
+            )
+        confidence_parsed: dict[str, Any] = confidence_raw if isinstance(confidence_raw, dict) else {}
 
-        # Apply documentation if above threshold
-        if "documentation" in gaps and "documentation" in parsed:
-            doc_conf = parsed.get("confidence", {}).get("documentation", 0.0)
-            confidence["documentation"] = doc_conf
-            if doc_conf >= self.threshold:
-                updates["documentation"] = parsed["documentation"]
+        def _apply_simple(field: str) -> None:
+            """Apply a simple scalar field from parsed SLM output if confidence is sufficient."""
+            if field not in gaps or field not in parsed:
+                return
+            field_conf: float = confidence_parsed.get(field, 0.0)
+            confidence[field] = field_conf
+            if field_conf >= self.threshold:
+                updates[field] = parsed[field]
             else:
-                warnings.append(f"Low confidence ({doc_conf:.2f}) for documentation — skipped. Review manually.")
+                warnings.append(f"Low confidence ({field_conf:.2f}) for {field} — skipped. Review manually.")
+
+        _apply_simple("description")
+        _apply_simple("documentation")
 
         # Apply annotations if above threshold. Field set is derived from
         # ModuleAnnotations at import time, so adding new fields upstream
         # automatically widens what the SLM may populate (extra excluded).
         if "annotations" in gaps and "annotations" in parsed and isinstance(parsed["annotations"], dict):
             ann_data = parsed["annotations"]
-            ann_conf = parsed.get("confidence", {})
             accepted: dict[str, Any] = {}
             for field_name, validate in _ANNOTATION_FIELD_VALIDATORS.items():
                 if field_name not in ann_data or not validate(ann_data[field_name]):
                     continue
-                field_conf = ann_conf.get(f"annotations.{field_name}", ann_conf.get(field_name, 0.0))
+                field_conf = confidence_parsed.get(f"annotations.{field_name}", confidence_parsed.get(field_name, 0.0))
                 confidence[f"annotations.{field_name}"] = field_conf
                 if field_conf >= self.threshold:
                     accepted[field_name] = ann_data[field_name]
@@ -258,14 +264,7 @@ class AIEnhancer:
                 base = module.annotations or DEFAULT_ANNOTATIONS
                 updates["annotations"] = replace(base, **accepted)
 
-        # Apply input_schema if above threshold
-        if "input_schema" in gaps and "input_schema" in parsed:
-            schema_conf = parsed.get("confidence", {}).get("input_schema", 0.0)
-            confidence["input_schema"] = schema_conf
-            if schema_conf >= self.threshold:
-                updates["input_schema"] = parsed["input_schema"]
-            else:
-                warnings.append(f"Low confidence ({schema_conf:.2f}) for input_schema — skipped. Review manually.")
+        _apply_simple("input_schema")
 
         if not updates:
             return replace(module, warnings=warnings) if warnings != module.warnings else module

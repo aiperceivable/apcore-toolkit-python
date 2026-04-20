@@ -550,3 +550,48 @@ class TestConfiguration:
     def test_negative_batch_size_raises(self) -> None:
         with pytest.raises(ValueError, match="APCORE_AI_BATCH_SIZE"):
             AIEnhancer(batch_size=-1)
+
+
+class TestNonDictConfidence:
+    """SLM returns a non-dict 'confidence' value — must not raise AttributeError (D1-02)."""
+
+    def setup_method(self) -> None:
+        self.enhancer = AIEnhancer(
+            endpoint="http://localhost:11434/v1",
+            model="test-model",
+            threshold=0.7,
+            timeout=10,
+        )
+        self.module = ScannedModule(
+            module_id="tasks.create",
+            description="",
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+            tags=[],
+            target="mod:func",
+        )
+
+    def test_string_confidence_does_not_crash(self) -> None:
+        """SLM returns confidence as a plain string — must degrade gracefully."""
+        llm_response = '{"description": "Create a task", "confidence": "high"}'
+        with patch.object(self.enhancer, "_call_llm", return_value=llm_response):
+            result = self.enhancer._enhance_module(self.module, ["description"])
+        # Confidence is 0.0 (string treated as missing) — below threshold → skipped with warning
+        assert result.description == ""
+        assert any("Low confidence" in w for w in result.warnings)
+
+    def test_integer_confidence_does_not_crash(self) -> None:
+        """SLM returns confidence as a bare integer — must degrade gracefully."""
+        llm_response = '{"description": "Create a task", "confidence": 1}'
+        with patch.object(self.enhancer, "_call_llm", return_value=llm_response):
+            result = self.enhancer._enhance_module(self.module, ["description"])
+        assert result.description == ""
+        assert any("Low confidence" in w for w in result.warnings)
+
+    def test_null_confidence_does_not_crash(self) -> None:
+        """SLM omits confidence key — must degrade gracefully."""
+        llm_response = '{"description": "Create a task"}'
+        with patch.object(self.enhancer, "_call_llm", return_value=llm_response):
+            result = self.enhancer._enhance_module(self.module, ["description"])
+        assert result.description == ""
+        assert any("Low confidence" in w for w in result.warnings)
