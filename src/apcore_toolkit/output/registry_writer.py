@@ -41,6 +41,7 @@ class RegistryWriter:
         dry_run: bool = False,
         verify: bool = False,
         verifiers: list[Verifier] | None = None,
+        allowed_prefixes: list[str] | None = None,
     ) -> list[WriteResult]:
         """Register scanned modules into the registry.
 
@@ -52,6 +53,13 @@ class RegistryWriter:
             verifiers: Optional list of custom Verifier instances. When provided,
                 these run after the built-in check (if verify=True). First failure
                 stops the chain.
+            allowed_prefixes: Optional allowlist of module-name prefixes
+                forwarded to :func:`resolve_target`. When set, registration
+                fails for any ``ScannedModule.target`` whose module path does
+                not match one of the prefixes. Use this when loading bindings
+                from untrusted sources to mitigate arbitrary-code-execution
+                via forged ``target`` strings (matches the TypeScript SDK's
+                ``allowedPrefixes`` option).
 
         Returns:
             List of WriteResult instances.
@@ -62,7 +70,7 @@ class RegistryWriter:
                 results.append(WriteResult(module_id=mod.module_id))
                 continue
             try:
-                fm = self._to_function_module(mod)
+                fm = self._to_function_module(mod, allowed_prefixes=allowed_prefixes)
                 registry.register(mod.module_id, fm)
             except Exception as exc:
                 logger.warning(
@@ -96,18 +104,26 @@ class RegistryWriter:
             results.append(result)
         return results
 
-    def _to_function_module(self, mod: ScannedModule) -> FunctionModule:
+    def _to_function_module(
+        self,
+        mod: ScannedModule,
+        *,
+        allowed_prefixes: list[str] | None = None,
+    ) -> FunctionModule:
         """Convert a ScannedModule to an apcore FunctionModule.
 
         Args:
             mod: The ScannedModule to convert.
+            allowed_prefixes: Forwarded to :func:`resolve_target` — when set,
+                rejects any target whose module path is not under an allowed
+                prefix.
 
         Returns:
             A FunctionModule instance ready for registry insertion.
         """
         from apcore import FunctionModule
 
-        func = flatten_pydantic_params(resolve_target(mod.target))
+        func = flatten_pydantic_params(resolve_target(mod.target, allowed_prefixes=allowed_prefixes))
 
         return FunctionModule(
             func=func,

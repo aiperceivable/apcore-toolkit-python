@@ -103,6 +103,28 @@ class TestDeduplicateIds:
         result = self.scanner.deduplicate_ids([])
         assert result == []
 
+    def test_preexisting_suffix_no_collision(self) -> None:
+        """Regression: input ``[a, a, a_2]`` must NOT produce duplicate ``a_2``.
+
+        Without pre-scanning original IDs, the second ``a`` gets renamed to
+        ``a_2`` and collides with the already-present ``a_2``. The fix
+        pre-computes the set of original IDs and bumps past any collision.
+        """
+        modules = [_make_module("a"), _make_module("a"), _make_module("a_2")]
+        result = self.scanner.deduplicate_ids(modules)
+        assert [m.module_id for m in result] == ["a", "a_3", "a_2"]
+
+    def test_dense_suffix_cluster_no_collision(self) -> None:
+        """Dense suffix cluster ``[a, a, a_2, a_3]`` skips to ``a_4``."""
+        modules = [
+            _make_module("a"),
+            _make_module("a"),
+            _make_module("a_2"),
+            _make_module("a_3"),
+        ]
+        result = self.scanner.deduplicate_ids(modules)
+        assert [m.module_id for m in result] == ["a", "a_4", "a_2", "a_3"]
+
 
 class TestDeduplicateWarnings:
     def setup_method(self) -> None:

@@ -31,7 +31,7 @@ class TestRegistryWriter:
         assert len(result) == 1
         assert isinstance(result[0], WriteResult)
         assert result[0].module_id == "users.get_user"
-        mock_to_fm.assert_called_once_with(sample_module)
+        mock_to_fm.assert_called_once_with(sample_module, allowed_prefixes=None)
         mock_registry.register.assert_called_once()
 
     def test_write_dry_run(
@@ -112,11 +112,13 @@ class TestGetWriterRegistry:
 class TestRegistryWriterBatchResilience:
     """A registration error on one module must not abort subsequent modules."""
 
-    def test_error_on_first_continues_to_second(
-        self, writer: RegistryWriter, mock_registry: MagicMock
-    ) -> None:
-        mod_a = ScannedModule(module_id="a.func", description="", input_schema={}, output_schema={}, tags=[], target="m:f")
-        mod_b = ScannedModule(module_id="b.func", description="", input_schema={}, output_schema={}, tags=[], target="m:f")
+    def test_error_on_first_continues_to_second(self, writer: RegistryWriter, mock_registry: MagicMock) -> None:
+        mod_a = ScannedModule(
+            module_id="a.func", description="", input_schema={}, output_schema={}, tags=[], target="m:f"
+        )
+        mod_b = ScannedModule(
+            module_id="b.func", description="", input_schema={}, output_schema={}, tags=[], target="m:f"
+        )
         with patch.object(writer, "_to_function_module") as mock_to_fm:
             mock_to_fm.side_effect = [RuntimeError("collision"), MagicMock()]
             results = writer.write([mod_a, mod_b], mock_registry)

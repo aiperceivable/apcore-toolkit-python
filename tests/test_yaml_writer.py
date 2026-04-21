@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from apcore_toolkit.output.types import WriteResult
@@ -45,6 +46,60 @@ class TestYAMLWriterFileOutput:
         assert parsed["bindings"][0]["module_id"] == "users.get_user"
         assert len(results) == 1
         assert results[0].path is not None
+
+    def test_atomic_write_leaves_no_tmp_files(self, tmp_path: Path, sample_module: ScannedModule) -> None:
+        """Atomic write: a successful write must leave no ``.tmp`` residue.
+
+        Regression for non-atomic write that used ``Path.write_text`` directly.
+        The new implementation writes to ``<name>.<pid>.tmp`` then
+        ``os.replace()`` onto the final path; after success no tmp should
+        remain.
+        """
+        self.writer.write([sample_module], str(tmp_path))
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert tmp_files == []
+
+    def test_write_skips_symlink_target(self, tmp_path: Path, sample_module: ScannedModule) -> None:
+        """Writer must refuse to overwrite a symlink at the final target path.
+
+        A symlink at the target could redirect the write outside the output
+        directory even when the resolved parent looks safe.
+        """
+        import re as _re
+
+        safe_id = _re.sub(r"[^a-zA-Z0-9._-]", "_", sample_module.module_id)
+        safe_id = _re.sub(r"\.{2,}", "_", safe_id)
+        target_name = f"{safe_id}.binding.yaml"
+        target = tmp_path / target_name
+        decoy = tmp_path / "decoy.txt"
+        decoy.write_text("should not be overwritten", encoding="utf-8")
+        target.symlink_to(decoy)
+
+        results = self.writer.write([sample_module], str(tmp_path))
+
+        assert len(results) == 1
+        assert results[0].verified is False
+        assert results[0].verification_error is not None
+        assert "symlink" in results[0].verification_error.lower()
+        assert decoy.read_text(encoding="utf-8") == "should not be overwritten"
+
+    def test_atomic_write_cleans_tmp_on_failure(
+        self, tmp_path: Path, sample_module: ScannedModule, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When ``os.replace`` fails, the tmp file must not be left behind."""
+        from apcore_toolkit.output import yaml_writer as _yw
+
+        def _boom(_src: str, _dst: str) -> None:
+            raise OSError("simulated rename failure")
+
+        monkeypatch.setattr(_yw.os, "replace", _boom)
+        from apcore_toolkit.output.errors import WriteError
+
+        with pytest.raises(WriteError):
+            self.writer.write([sample_module], str(tmp_path))
+
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert tmp_files == []
 
     def test_creates_output_dir(self, tmp_path: Path, sample_module: ScannedModule) -> None:
         out_dir = tmp_path / "nested" / "output"

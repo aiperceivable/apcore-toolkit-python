@@ -88,6 +88,61 @@ class TestLoadData:
             loader.load_data({"bindings": [{"module_id": "x"}]})
         assert "target" in exc.value.missing_fields
 
+    def test_wrong_type_module_id_rejected(self, loader: BindingLoader) -> None:
+        """Regression: ``module_id: 42`` must NOT silently coerce to ``"42"``.
+
+        Previously Python/TypeScript accepted non-string scalars and then
+        coerced them via ``str()`` / ``String()``, while Rust rejected them.
+        The same YAML must now behave identically across the three SDKs.
+        """
+        with pytest.raises(BindingLoadError) as exc:
+            loader.load_data({"bindings": [{"module_id": 42, "target": "pkg:func"}]})
+        assert "module_id" in exc.value.missing_fields
+
+    def test_wrong_type_target_rejected(self, loader: BindingLoader) -> None:
+        with pytest.raises(BindingLoadError) as exc:
+            loader.load_data({"bindings": [{"module_id": "x", "target": True}]})
+        assert "target" in exc.value.missing_fields
+
+    def test_empty_string_module_id_rejected(self, loader: BindingLoader) -> None:
+        """Empty strings count as missing — an empty identifier is never valid."""
+        with pytest.raises(BindingLoadError) as exc:
+            loader.load_data({"bindings": [{"module_id": "", "target": "pkg:func"}]})
+        assert "module_id" in exc.value.missing_fields
+
+    def test_strict_mode_rejects_non_object_input_schema(self, loader: BindingLoader) -> None:
+        """In strict mode, ``input_schema`` must be a mapping (not a string)."""
+        entry = {
+            "module_id": "x",
+            "target": "pkg:func",
+            "input_schema": "not a dict",
+            "output_schema": {"type": "object"},
+        }
+        with pytest.raises(BindingLoadError) as exc:
+            loader.load_data({"bindings": [entry]}, strict=True)
+        assert "input_schema" in exc.value.missing_fields
+
+    def test_input_schema_deep_copied_on_load(self, loader: BindingLoader) -> None:
+        """Regression: mutating a loaded module's input_schema must not leak back.
+
+        Python previously did a shallow ``dict(raw_input_schema)``, so nested
+        ``properties`` were shared with the parsed YAML source and downstream
+        mutation corrupted the original data. Rust already deep-clones
+        (``serde_json::Value.clone``); this brings Python in line.
+        """
+        source_schema = {"type": "object", "properties": {"id": {"type": "integer"}}}
+        entry = {"module_id": "x", "target": "p:f", "input_schema": source_schema}
+        m = loader.load_data({"bindings": [entry]})[0]
+        m.input_schema["properties"]["id"]["type"] = "string"  # type: ignore[index]
+        assert source_schema["properties"]["id"]["type"] == "integer"
+
+    def test_metadata_deep_copied_on_load(self, loader: BindingLoader) -> None:
+        source_meta = {"auth": {"scope": ["admin", "write"]}}
+        entry = {"module_id": "x", "target": "p:f", "metadata": source_meta}
+        m = loader.load_data({"bindings": [entry]})[0]
+        m.metadata["auth"]["scope"].append("leaked")
+        assert source_meta["auth"]["scope"] == ["admin", "write"]
+
     def test_missing_bindings_key(self, loader: BindingLoader) -> None:
         with pytest.raises(BindingLoadError, match="bindings"):
             loader.load_data({"spec_version": "1.0"})
@@ -248,11 +303,17 @@ class TestLoadFromFile:
         assert m.module_id == "g\u00f6tt"
 
     def test_null_value_in_required_field_error_wording(self, loader: BindingLoader) -> None:
-        """A present-but-null required field produces 'missing or null' wording."""
+        """A present-but-null required field produces 'missing or invalid' wording.
+
+        The wording widened from "missing or null" to "missing or invalid" in
+        0.5.0 when the loader began rejecting wrong-type scalars (e.g.
+        ``module_id: 42``) in addition to null/absent values — matching the
+        Rust loader's ``MissingFields`` contract.
+        """
         entry = {"module_id": "x", "target": None}
         with pytest.raises(BindingLoadError) as exc:
             loader.load_data({"bindings": [entry]})
-        assert "missing or null" in exc.value.reason
+        assert "missing or invalid" in exc.value.reason
         assert "target" in exc.value.missing_fields
 
 

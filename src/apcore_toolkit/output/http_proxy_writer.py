@@ -60,8 +60,7 @@ def _get_http_fields(mod: Any) -> tuple[str, str]:
     url_path = str(url_path)
     if url_path.startswith(("http://", "https://", "file://", "ftp://")):
         raise ValueError(
-            f"url_path must be a relative path, not an absolute URL: {url_path!r} "
-            f"(module: {mod.module_id!r})"
+            f"url_path must be a relative path, not an absolute URL: {url_path!r} " f"(module: {mod.module_id!r})"
         )
     return str(http_method), url_path
 

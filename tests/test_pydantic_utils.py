@@ -151,6 +151,78 @@ class TestResolveTarget:
             resolve_target("urllib.parse:ParseResult.nonexistent_method")
 
 
+class TestResolveTargetAllowedPrefixes:
+    """Security allowlist for ``resolve_target`` (parity with TypeScript SDK).
+
+    Previously Python's ``resolve_target`` would import any module, making
+    binding-file forgery a code-execution vector (``target: "os:system"``
+    in an attacker-supplied .binding.yaml). The ``allowed_prefixes`` kwarg
+    restricts module imports to a caller-controlled namespace.
+    """
+
+    def test_no_prefixes_allows_any_module(self) -> None:
+        """Omitting ``allowed_prefixes`` preserves the historical behaviour."""
+        import json
+
+        assert resolve_target("json:loads") is json.loads
+
+    def test_empty_prefixes_allows_any_module(self) -> None:
+        """An explicit empty list behaves the same as ``None`` (permissive)."""
+        import json
+
+        assert resolve_target("json:loads", allowed_prefixes=[]) is json.loads
+
+    def test_allows_module_matching_prefix(self) -> None:
+        import json
+
+        assert resolve_target("json:loads", allowed_prefixes=["json"]) is json.loads
+
+    def test_allows_dotted_descendant_of_prefix(self) -> None:
+        import os.path
+
+        assert resolve_target("os.path:join", allowed_prefixes=["os"]) is os.path.join
+
+    def test_rejects_module_outside_prefix(self) -> None:
+        with pytest.raises(PermissionError, match="allowed_prefixes"):
+            resolve_target("os:system", allowed_prefixes=["myapp"])
+
+    def test_rejects_partial_prefix_match(self) -> None:
+        """Regression: ``"myapp"`` must NOT permit ``"myappx"`` (boundary)."""
+        with pytest.raises(PermissionError):
+            resolve_target("myappx.hacks:evil", allowed_prefixes=["myapp"])
+
+    def test_trailing_dot_on_prefix_tolerated(self) -> None:
+        """``"json."`` should match the same set as ``"json"``."""
+        import json
+
+        assert resolve_target("json:loads", allowed_prefixes=["json."]) is json.loads
+
+    def test_multiple_prefixes_any_match_allows(self) -> None:
+        import json
+
+        assert resolve_target("json:loads", allowed_prefixes=["myapp", "json", "os"]) is json.loads
+
+    def test_rejection_happens_before_import(self, monkeypatch) -> None:
+        """A rejected target must NOT trigger ``importlib.import_module``.
+
+        Skipping the import avoids side-effects (e.g. module-level code
+        executed at import time) even when the target is ultimately
+        refused. Parallels the TS SDK's pre-import allowlist check.
+        """
+        import apcore_toolkit.pydantic_utils as _pu
+
+        calls: list[str] = []
+
+        def _tracking_import(name: str) -> object:
+            calls.append(name)
+            raise AssertionError(f"import_module was called for {name!r} despite allowlist rejection")
+
+        monkeypatch.setattr(_pu.importlib, "import_module", _tracking_import)
+        with pytest.raises(PermissionError):
+            resolve_target("os:system", allowed_prefixes=["myapp"])
+        assert calls == []
+
+
 class TestFlattenPydanticParamsErrorSurface:
     """Narrowed exception handling in flatten_pydantic_params."""
 

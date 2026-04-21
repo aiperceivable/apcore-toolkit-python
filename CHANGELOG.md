@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.0] - 2026-04-19
+## [0.5.0] - 2026-04-21
 
 ### Added
 
@@ -36,8 +36,10 @@ All notable changes to this project will be documented in this file.
 
 ### Hardening (post-review)
 
-- **`BindingLoader`**: warns (rather than silently drops) malformed `display` values that are not a mapping; `load()` gained a `recursive: bool = False` kwarg for nested binding layouts; `read_text` now forces UTF-8 decoding so non-ASCII aliases round-trip on non-UTF-8 locales; error wording changed from "missing required fields" to "missing or null required fields" to cover present-but-null keys.
-- **`YAMLWriter`**: `display` is now deep-copied into the emitted binding (defensive parity with the TypeScript/Rust writers) so post-write mutation of `ScannedModule.display` cannot leak into the file.
+- **`BindingLoader`**: warns (rather than silently drops) malformed `display` values that are not a mapping; `load()` gained a `recursive: bool = False` kwarg for nested binding layouts; `read_text` now forces UTF-8 decoding so non-ASCII aliases round-trip on non-UTF-8 locales; required-field validation now rejects wrong-type scalars (e.g. `module_id: 42`, `target: true`) and empty strings in addition to absent/null, matching the Rust loader's contract — error wording is "missing or invalid required fields"; nested `input_schema`/`output_schema`/`metadata` are now deep-copied via `copy.deepcopy` so caller mutation does not leak back into the parsed YAML source graph.
+- **`YAMLWriter`**: `display` is now deep-copied into the emitted binding (defensive parity with the TypeScript/Rust writers) so post-write mutation of `ScannedModule.display` cannot leak into the file. File writes are now atomic: the payload is written to `<name>.<pid>.tmp`, `fsync`ed, then `os.replace`d onto the final path (matches the TypeScript `tmp + rename` and Rust `tmp + sync_all + rename` writers). A process crash mid-write no longer leaves a partial YAML file that `BindingLoader` would fail to parse. A pre-write check refuses to overwrite a symlink at the target path (defence-in-depth against TOCTOU).
+- **`BaseScanner.deduplicate_ids`**: pre-scans all input `module_id`s so generated `_N` suffixes never collide with an ID already present in the input. Input `[a, a, a_2]` now yields `[a, a_3, a_2]` instead of the previous buggy `[a, a_2, a_2]`. Matches the TypeScript and Rust implementations.
+- **`resolve_target` / `RegistryWriter.write`**: new `allowed_prefixes: list[str] | None` kwarg (forwarded from `RegistryWriter.write` through `_to_function_module` to `resolve_target`). When set, `resolve_target` rejects any module path outside the listed prefixes **before** calling `importlib.import_module`, raising `PermissionError`. Mitigates arbitrary-code-execution via forged binding files (e.g. a malicious `target: "os:system"` injected into untrusted YAML). Parity with the TypeScript SDK's `allowedPrefixes` option, adapted to Python's module-name import model. Boundary-aware: `"myapp"` permits `myapp.views` but NOT `myappx.foo`. Rust does not need this because `resolve_target` is parse-only and the `HandlerFactory` is the security boundary.
 - **`ScannedModule.display`**: moved to the END of the dataclass so existing positional `ScannedModule(...)` callers are not broken by the new field.
 
 ## [0.4.1] - 2026-03-25

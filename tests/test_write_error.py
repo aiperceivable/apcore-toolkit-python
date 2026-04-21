@@ -29,20 +29,25 @@ class TestWriteError:
 
 
 class TestWriteErrorFromWriters:
-    def test_yaml_writer_raises_write_error_on_io_failure(self, sample_module):
+    def test_yaml_writer_raises_write_error_on_io_failure(self, sample_module, tmp_path):
+        """YAMLWriter surfaces a WriteError when the atomic rename fails.
+
+        YAMLWriter uses an atomic tmp-file + ``os.replace`` pattern (ported
+        from the TypeScript/Rust writers). Failures during the rename step
+        must still surface as WriteError with the original cause embedded.
+        """
         from unittest.mock import patch
 
+        import pytest
+
         from apcore_toolkit import YAMLWriter
+        from apcore_toolkit.output import yaml_writer as _yw
 
         writer = YAMLWriter()
-        with patch("pathlib.Path.write_text", side_effect=PermissionError("access denied")):
-            with patch("pathlib.Path.mkdir"):
-                with patch("pathlib.Path.exists", return_value=False):
-                    import pytest
-
-                    with pytest.raises(WriteError) as exc_info:
-                        writer.write([sample_module], output_dir="/tmp/test_yaml_writer_err")
-                    assert "access denied" in str(exc_info.value)
+        with patch.object(_yw.os, "replace", side_effect=PermissionError("access denied")):
+            with pytest.raises(WriteError) as exc_info:
+                writer.write([sample_module], output_dir=str(tmp_path))
+        assert "access denied" in str(exc_info.value)
 
     def test_python_writer_raises_write_error_on_io_failure(self, sample_module):
         from unittest.mock import patch

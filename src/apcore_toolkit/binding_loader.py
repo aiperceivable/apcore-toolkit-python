@@ -196,12 +196,17 @@ class BindingLoader:
         strict: bool,
     ) -> ScannedModule:
         required = _STRICT_REQUIRED if strict else _LOOSE_REQUIRED
-        missing = [f for f in required if f not in entry or entry[f] is None]
+        # A required field is "missing or invalid" when absent, null, or of
+        # the wrong type. Previously only absent/None was rejected, so
+        # ``module_id: 42`` or ``target: true`` silently coerced to
+        # ``str(42)="42"`` downstream and corrupted the registered module.
+        # This now matches the Rust loader's strict behaviour.
+        missing = [f for f in required if self._required_field_invalid(f, entry)]
         if missing:
             raise BindingLoadError(
-                "missing or null required fields",
+                "missing or invalid required fields",
                 file_path=file_path,
-                module_id=entry.get("module_id"),
+                module_id=entry.get("module_id") if isinstance(entry.get("module_id"), str) else None,
                 missing_fields=missing,
             )
 
@@ -227,11 +232,16 @@ class BindingLoader:
                 module_id=entry.get("module_id"),
             )
 
+        # Deep-copy nested containers so later caller mutation of a
+        # ScannedModule.input_schema/output_schema/metadata does not leak back
+        # into the parsed YAML source graph. Matches the Rust loader
+        # (serde_json::Value.clone is deep) and brings Python in line with the
+        # defensive-copy contract already applied to display/examples.
         return ScannedModule(
             module_id=str(entry["module_id"]),
             description=entry.get("description") or "",
-            input_schema=dict(raw_input_schema) if raw_input_schema else {},
-            output_schema=dict(raw_output_schema) if raw_output_schema else {},
+            input_schema=copy.deepcopy(raw_input_schema) if raw_input_schema else {},
+            output_schema=copy.deepcopy(raw_output_schema) if raw_output_schema else {},
             tags=list(raw_tags) if raw_tags else [],
             target=str(entry["target"]),
             version=str(entry.get("version") or "1.0.0"),
@@ -239,10 +249,30 @@ class BindingLoader:
             documentation=entry.get("documentation"),
             suggested_alias=entry.get("suggested_alias"),
             examples=self._parse_examples(entry.get("examples"), module_id=entry["module_id"]),
-            metadata=dict(entry.get("metadata") or {}),
+            metadata=copy.deepcopy(entry.get("metadata") or {}),
             display=self._parse_display(entry.get("display"), module_id=entry["module_id"]),
             warnings=list(entry.get("warnings") or []),
         )
+
+    @staticmethod
+    def _required_field_invalid(field: str, entry: dict[str, Any]) -> bool:
+        """Return True if ``entry[field]`` is absent, null, or the wrong type.
+
+        Schema fields (``input_schema``, ``output_schema``) must be mappings.
+        All other required fields (``module_id``, ``target``) must be
+        non-empty strings. This rejects YAML like ``module_id: 42`` or
+        ``target: true`` that previously slipped through and got coerced
+        to ``"42"`` / ``"True"`` downstream.
+        """
+        if field not in entry:
+            return True
+        value = entry[field]
+        if value is None:
+            return True
+        if field in ("input_schema", "output_schema"):
+            return not isinstance(value, dict)
+        # module_id, target — must be non-empty string
+        return not isinstance(value, str) or len(value) == 0
 
     @staticmethod
     def _parse_display(data: Any, *, module_id: str) -> dict[str, Any] | None:

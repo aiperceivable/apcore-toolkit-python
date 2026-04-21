@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,15 +76,40 @@ class YAMLWriter:
             # Collapse consecutive dots to prevent path traversal
             safe_id = re.sub(r"\.{2,}", "_", safe_id)
             filename = f"{safe_id}.binding.yaml"
-            file_path = (output_path / filename).resolve()
+            # Keep file_path unresolved so the symlink check below detects
+            # a symlink AT the target path instead of silently following it.
+            # (``Path.resolve()`` dereferences the final symlink component.)
+            file_path = output_path / filename
 
-            # Path traversal protection
-            if not file_path.is_relative_to(output_path):
+            # Path traversal protection: after filename sanitization the path
+            # has no slashes, so parent must equal the already-canonical
+            # output_path. Guards against future refactors of the sanitizer.
+            if file_path.parent != output_path:
                 logger.warning(
                     "Skipping file outside output directory: %s",
                     file_path,
                 )
                 continue
+
+            # Pre-write symlink check (TOCTOU mitigation — matches the
+            # TypeScript writer's ``lstatSync`` guard). A symlink at the
+            # target path could redirect the write outside ``output_path``
+            # even though the resolved parent passed the is_relative_to check.
+            try:
+                if file_path.is_symlink():
+                    logger.warning("Skipping symlink escape at: %s", file_path)
+                    results.append(
+                        WriteResult(
+                            module_id=module.module_id,
+                            path=str(file_path),
+                            verified=False,
+                            verification_error="Security skip: symlink at target path",
+                        )
+                    )
+                    continue
+            except OSError:
+                # Target does not exist yet — safe to write.
+                pass
 
             if file_path.exists():
                 logger.warning("Overwriting existing file: %s", file_path)
@@ -95,9 +121,34 @@ class YAMLWriter:
                 " to customize schemas.\n\n"
             )
             yaml_content = yaml.safe_dump(binding_data, default_flow_style=False, sort_keys=False)
+
+            # Atomic write: write to a tmp file in the same directory, fsync,
+            # then os.replace() onto the final path. Matches the TypeScript
+            # (tmp + renameSync) and Rust (tmp + sync_all + rename) writers.
+            # Without this, a crash mid-write leaves a partial YAML file that
+            # BindingLoader later fails to parse.
+            tmp_path = file_path.parent / f"{file_path.name}.{os.getpid()}.tmp"
             try:
-                file_path.write_text(header + yaml_content, encoding="utf-8")
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    f.write(header + yaml_content)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, file_path)
+                # Post-rename defence-in-depth: warn if the result is a
+                # symlink (would indicate a TOCTOU race).
+                try:
+                    if file_path.is_symlink():
+                        logger.warning(
+                            "YAMLWriter: post-rename symlink detected at %s — possible race",
+                            file_path,
+                        )
+                except OSError:
+                    pass
             except OSError as exc:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 raise WriteError(str(file_path), exc) from exc
             logger.debug("Written: %s", file_path)
 

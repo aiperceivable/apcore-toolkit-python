@@ -134,17 +134,32 @@ class BaseScanner(ABC):
     def deduplicate_ids(self, modules: list[ScannedModule]) -> list[ScannedModule]:
         """Resolve duplicate module IDs by appending _2, _3, etc.
 
+        Pre-scans all original IDs so generated suffixes never collide with
+        an ID that already exists in the input list. For example, input
+        ``[a, a, a_2]`` yields ``[a, a_3, a_2]`` rather than the colliding
+        ``[a, a_2, a_2]`` produced by a naive counter. This matches the
+        TypeScript and Rust implementations.
+
         Operates on ScannedModule instances directly, producing new instances
         with updated module_id via ``dataclasses.replace()``. A warning is
         appended to the module's warnings list when a rename occurs.
         """
-        seen: dict[str, int] = {}
+        seen_count: dict[str, int] = {}
+        # Pre-populate with all original IDs so generated suffixes never
+        # collide with an ID that already exists in the input list.
+        used_ids: set[str] = {m.module_id for m in modules}
         result: list[ScannedModule] = []
         for module in modules:
             mid = module.module_id
-            if mid in seen:
-                seen[mid] += 1
-                new_id = f"{mid}_{seen[mid]}"
+            count = seen_count.get(mid, 0)
+            seen_count[mid] = count + 1
+            if count > 0:
+                counter = count + 1
+                new_id = f"{mid}_{counter}"
+                while new_id in used_ids:
+                    counter += 1
+                    new_id = f"{mid}_{counter}"
+                used_ids.add(new_id)
                 result.append(
                     replace(
                         module,
@@ -156,6 +171,5 @@ class BaseScanner(ABC):
                     )
                 )
             else:
-                seen[mid] = 1
                 result.append(module)
         return result

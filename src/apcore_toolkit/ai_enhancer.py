@@ -115,9 +115,7 @@ class AIEnhancer:
 
         _parsed = _urlparse(self.endpoint)
         if _parsed.scheme not in ("http", "https"):
-            raise ValueError(
-                f"APCORE_AI_ENDPOINT must use http or https scheme, got: {self.endpoint!r}"
-            )
+            raise ValueError(f"APCORE_AI_ENDPOINT must use http or https scheme, got: {self.endpoint!r}")
         self.model = model or os.environ.get("APCORE_AI_MODEL", _DEFAULT_MODEL)
         self.threshold = (
             threshold if threshold is not None else self._parse_float_env("APCORE_AI_THRESHOLD", _DEFAULT_THRESHOLD)
