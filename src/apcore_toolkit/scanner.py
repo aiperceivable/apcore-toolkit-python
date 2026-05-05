@@ -89,14 +89,18 @@ class BaseScanner(ABC):
     def infer_annotations_from_method(method: str) -> ModuleAnnotations:
         """Infer behavioral annotations from an HTTP method.
 
-        Mapping:
-            GET    -> readonly=True
-            DELETE -> destructive=True
-            PUT    -> idempotent=True
-            Others -> default (all False)
+        Canonical mapping per
+        ``apcore-toolkit/docs/features/scanning.md`` (RFC 9110 §9.2 safe-method
+        semantics):
+            GET     -> readonly=True, cacheable=True
+            HEAD    -> readonly=True
+            OPTIONS -> readonly=True
+            PUT     -> idempotent=True
+            DELETE  -> destructive=True
+            Others  -> default (all False)
 
         Args:
-            method: HTTP method string (e.g., "GET", "post").
+            method: HTTP method string (e.g., "GET", "post"). Case-insensitive.
 
         Returns:
             ModuleAnnotations instance with inferred flags.
@@ -104,6 +108,8 @@ class BaseScanner(ABC):
         method_upper = method.upper()
         if method_upper == "GET":
             return replace(DEFAULT_ANNOTATIONS, readonly=True, cacheable=True)
+        elif method_upper in ("HEAD", "OPTIONS"):
+            return replace(DEFAULT_ANNOTATIONS, readonly=True)
         elif method_upper == "DELETE":
             return replace(DEFAULT_ANNOTATIONS, destructive=True)
         elif method_upper == "PUT":

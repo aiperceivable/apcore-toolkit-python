@@ -8,7 +8,12 @@ from importlib.metadata import version as _get_version
 from apcore_toolkit.ai_enhancer import AIEnhancer, Enhancer
 from apcore_toolkit.binding_loader import BindingLoader, BindingLoadError
 from apcore_toolkit.display import DisplayResolver
-from apcore_toolkit.formatting import to_markdown
+from apcore_toolkit.formatting import (
+    format_module,
+    format_modules,
+    format_schema,
+    to_markdown,
+)
 from apcore_toolkit.openapi import (
     deep_resolve_refs,
     extract_input_schema,
@@ -90,6 +95,9 @@ __all__ = [
     "extract_path_param_names",
     "filter_modules",
     "flatten_pydantic_params",
+    "format_module",
+    "format_modules",
+    "format_schema",
     "generate_suggested_alias",
     "get_writer",
     "has_path_params",

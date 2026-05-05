@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Surface-aware formatters** (refs aiperceivable/apcore-toolkit#13) — `format_module`, `format_schema`, `format_modules` for rendering `ScannedModule` and JSON Schema for specific consumer surfaces. Four styles for `format_module`: `markdown` (LLM context), `skill` (drop-in `.claude/skills/<id>/SKILL.md` or `.gemini/skills/<id>/SKILL.md` body with minimal `name` + `description` frontmatter — no vendor-specific extensions), `table-row` (CLI listing), `json` (programmatic). `format_schema` styles: `prose`, `table`, `json`. `format_modules` adds optional `group_by="tag" | "prefix"`. `display=True` (default) prefers the `ScannedModule.display` overlay over raw fields. Lives in `apcore_toolkit.formatting.surface`; re-exported at the top-level package.
+
+### Changed
+
+- **`infer_annotations_from_method` canonical mapping** (refs aiperceivable/apcore-toolkit#11) — `HEAD` and `OPTIONS` now map to `readonly=true` (without `cacheable=true`), matching the canonical mapping declared in `apcore-toolkit/docs/features/scanning.md` and aligning with the existing Rust SDK. Previously these methods returned default annotations.
+
 ## [0.5.0] - 2026-04-21
 
 ### Added

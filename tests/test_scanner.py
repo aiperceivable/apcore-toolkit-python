@@ -185,6 +185,26 @@ class TestInferAnnotationsFromMethod:
         assert ann.readonly is False
         assert ann.destructive is False
 
+    def test_head_readonly(self) -> None:
+        ann = BaseScanner.infer_annotations_from_method("HEAD")
+        assert ann.readonly is True
+        # HEAD is read-only but its responses are not generally cacheable
+        # at the application layer.
+        assert ann.cacheable is False
+        assert ann.destructive is False
+        assert ann.idempotent is False
+
+    def test_options_readonly(self) -> None:
+        ann = BaseScanner.infer_annotations_from_method("OPTIONS")
+        assert ann.readonly is True
+        assert ann.cacheable is False
+        assert ann.destructive is False
+        assert ann.idempotent is False
+
+    def test_head_case_insensitive(self) -> None:
+        ann = BaseScanner.infer_annotations_from_method("head")
+        assert ann.readonly is True
+
 
 class TestGenerateSuggestedAlias:
     def test_post_collection(self) -> None:
