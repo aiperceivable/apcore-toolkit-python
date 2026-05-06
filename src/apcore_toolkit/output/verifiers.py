@@ -169,8 +169,17 @@ def run_verifier_chain(
         try:
             result = verifier.verify(path, module_id)
         except Exception as exc:
-            logger.debug("Verifier %s crashed: %s", type(verifier).__name__, exc, exc_info=True)
-            return VerifyResult(ok=False, error=f"Verifier crashed: {exc}")
+            name = type(verifier).__name__
+            logger.debug("Verifier %s crashed: %s", name, exc, exc_info=True)
+            # Spec literal "Verifier crashed: …" is preserved so cross-
+            # language callers can do `error.startswith("Verifier crashed")`
+            # against the TypeScript and Rust SDKs as well. The verifier's
+            # class name is appended in parentheses for diagnosability,
+            # mirroring the TypeScript implementation.
+            return VerifyResult(
+                ok=False,
+                error=f"Verifier crashed: {exc} (verifier: {name})",
+            )
         if not result.ok:
             return result
     return VerifyResult(ok=True)

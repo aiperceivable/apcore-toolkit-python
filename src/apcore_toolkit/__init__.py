@@ -22,7 +22,7 @@ from apcore_toolkit.openapi import (
     resolve_schema,
 )
 from apcore_toolkit.output import get_writer
-from apcore_toolkit.output.errors import WriteError
+from apcore_toolkit.output.errors import InvalidFormatError, WriteError
 from apcore_toolkit.output.python_writer import PythonWriter
 from apcore_toolkit.output.http_proxy_writer import HTTPProxyRegistryWriter
 from apcore_toolkit.output.registry_writer import RegistryWriter
@@ -70,6 +70,7 @@ __all__ = [
     "ConventionScanner",
     "HTTPProxyRegistryWriter",
     "Enhancer",
+    "InvalidFormatError",
     "JSONVerifier",
     "MagicBytesVerifier",
     "PythonWriter",

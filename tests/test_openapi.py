@@ -105,6 +105,28 @@ class TestResolveRef:
         assert result == {"type": "boolean"}
 
 
+class TestExtractInputSchemaParametersGuard:
+    """D11-7 regression: ``extract_input_schema`` must not crash when an
+    OpenAPI operation supplies ``parameters`` as a non-list value."""
+
+    def test_non_list_parameters_logs_and_returns_empty_schema(self, caplog) -> None:
+        import logging
+
+        operation = {"parameters": {"name": "x", "in": "query"}}  # malformed: object, not list
+        with caplog.at_level(logging.WARNING, logger="apcore_toolkit"):
+            schema = extract_input_schema(operation, openapi_doc=None)
+        assert schema == {"type": "object", "properties": {}, "required": []}
+        assert "parameters" in caplog.text.lower()
+
+    def test_non_dict_parameter_entries_skipped(self) -> None:
+        # An array of strings (instead of dicts) must not crash; entries
+        # that are not dicts are silently skipped so the loop does not
+        # invoke ``.get("in")`` on a string.
+        operation = {"parameters": ["bad-entry", {"name": "id", "in": "query", "required": True}]}
+        schema = extract_input_schema(operation, openapi_doc=None)
+        assert "id" in schema["properties"]
+
+
 class TestResolveSchema:
     def test_ref_schema(self) -> None:
         schema = {"$ref": "#/components/schemas/User"}
@@ -521,9 +543,7 @@ class TestExtractOutputSchema:
             "responses": {
                 "204": {
                     "content": {
-                        "application/json": {
-                            "schema": {"type": "object", "properties": {"status": {"type": "string"}}}
-                        }
+                        "application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}}}}
                     }
                 }
             }

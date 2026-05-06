@@ -448,9 +448,7 @@ class TestBindingLoaderLimits:
 
         # Write a minimal valid binding file
         binding_file = tmp_path / "big.binding.yaml"
-        binding_file.write_text(
-            "spec_version: '1.0'\nbindings:\n  - module_id: x\n    target: m:f\n"
-        )
+        binding_file.write_text("spec_version: '1.0'\nbindings:\n  - module_id: x\n    target: m:f\n")
 
         # Patch Path.stat at the module level so only the size check is affected.
         # We call the real stat for is_file/is_dir checks (which use st_mode),
@@ -470,7 +468,7 @@ class TestBindingLoaderLimits:
 
     def test_too_many_files_raises_binding_load_error(self, loader: BindingLoader, tmp_path: Path) -> None:
         """More than _MAX_BINDING_FILES_PER_DIR files in a dir must raise BindingLoadError."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
         from pathlib import Path as _Path
         from apcore_toolkit.binding_loader import _MAX_BINDING_FILES_PER_DIR
 

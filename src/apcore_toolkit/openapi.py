@@ -87,9 +87,7 @@ def _deep_resolve_refs(
             result["items"] = _deep_resolve_refs(result["items"], openapi_doc, _depth + 1)
         elif isinstance(result["items"], list):
             result["items"] = [
-                _deep_resolve_refs(item, openapi_doc, _depth + 1)
-                for item in result["items"]
-                if isinstance(item, dict)
+                _deep_resolve_refs(item, openapi_doc, _depth + 1) for item in result["items"] if isinstance(item, dict)
             ]
 
     # Resolve nested properties
@@ -100,9 +98,7 @@ def _deep_resolve_refs(
 
     # Resolve additionalProperties when it is a schema dict (not a boolean)
     if "additionalProperties" in result and isinstance(result["additionalProperties"], dict):
-        result["additionalProperties"] = _deep_resolve_refs(
-            result["additionalProperties"], openapi_doc, _depth + 1
-        )
+        result["additionalProperties"] = _deep_resolve_refs(result["additionalProperties"], openapi_doc, _depth + 1)
 
     # Resolve patternProperties — each value is a schema dict
     if "patternProperties" in result and isinstance(result["patternProperties"], dict):
@@ -171,8 +167,20 @@ def extract_input_schema(
         "required": [],
     }
 
-    # Query/path parameters
-    for param in operation.get("parameters", []):
+    # Query/path parameters — guard against malformed OpenAPI docs where
+    # `parameters` is present but not a list (e.g. an object). Mirrors the
+    # TypeScript implementation's `Array.isArray` check + warning so the
+    # three SDKs converge on the same crash-free behaviour.
+    raw_parameters = operation.get("parameters", [])
+    if not isinstance(raw_parameters, list):
+        logger.warning(
+            "extract_input_schema: operation.parameters is not a list " "(got %s); ignoring",
+            type(raw_parameters).__name__,
+        )
+        raw_parameters = []
+    for param in raw_parameters:
+        if not isinstance(param, dict):
+            continue
         if param.get("in") in ("query", "path"):
             name = param.get("name")
             if not name:

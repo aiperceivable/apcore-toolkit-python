@@ -209,7 +209,13 @@ class TestResolveTargetAllowedPrefixes:
         executed at import time) even when the target is ultimately
         refused. Parallels the TS SDK's pre-import allowlist check.
         """
-        import apcore_toolkit.pydantic_utils as _pu
+        # ``importlib.import_module`` lives in ``apcore_toolkit.resolve_target``
+        # since the D9-002 split. ``apcore_toolkit.resolve_target`` is shadowed
+        # at the package attribute level by the re-exported function of the
+        # same name, so reach the module via ``sys.modules`` to monkeypatch it.
+        import sys
+
+        _rt = sys.modules["apcore_toolkit.resolve_target"]
 
         calls: list[str] = []
 
@@ -217,7 +223,7 @@ class TestResolveTargetAllowedPrefixes:
             calls.append(name)
             raise AssertionError(f"import_module was called for {name!r} despite allowlist rejection")
 
-        monkeypatch.setattr(_pu.importlib, "import_module", _tracking_import)
+        monkeypatch.setattr(_rt.importlib, "import_module", _tracking_import)
         with pytest.raises(PermissionError):
             resolve_target("os:system", allowed_prefixes=["myapp"])
         assert calls == []

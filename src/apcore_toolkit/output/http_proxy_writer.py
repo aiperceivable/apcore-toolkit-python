@@ -180,11 +180,7 @@ class HTTPProxyRegistryWriter:
                 # substitution so values containing "/", "?", "#", "%", or
                 # whitespace cannot corrupt the URL. Mirrors the Rust
                 # implementation's percent_encode_path_segment.
-                path_values = {
-                    k: _percent_encode_path_segment(str(v))
-                    for k, v in inputs.items()
-                    if k in path_params
-                }
+                path_values = {k: _percent_encode_path_segment(str(v)) for k, v in inputs.items() if k in path_params}
                 actual_path = substitute_path_params(url_path, path_values)
                 # Reject the request if any placeholder went unfilled —
                 # otherwise a forgotten input would silently leak `{name}`
@@ -193,10 +189,7 @@ class HTTPProxyRegistryWriter:
                 if unfilled is not None:
                     raise ModuleError(
                         code=ErrorCodes.MODULE_EXECUTE_ERROR,
-                        message=(
-                            f"path parameter not provided: {unfilled.group(0)!r} "
-                            f"in url_path {url_path!r}"
-                        ),
+                        message=(f"path parameter not provided: {unfilled.group(0)!r} " f"in url_path {url_path!r}"),
                         details={"url_path": url_path, "missing": unfilled.group(0)},
                     )
                 non_path = {k: v for k, v in inputs.items() if k not in path_params}

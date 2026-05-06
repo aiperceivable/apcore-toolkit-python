@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from apcore_toolkit.output.http_proxy_writer import HTTPProxyRegistryWriter
 
+from apcore_toolkit.output.errors import InvalidFormatError as InvalidFormatError
 from apcore_toolkit.output.errors import WriteError as WriteError
 from apcore_toolkit.output.python_writer import PythonWriter
 from apcore_toolkit.output.registry_writer import RegistryWriter
@@ -39,7 +40,10 @@ def get_writer(
         A writer instance.
 
     Raises:
-        ValueError: If the format is not recognized.
+        InvalidFormatError: If the format is not recognized. Subclass of
+            ``ValueError`` so existing ``except ValueError`` callers keep
+            working; mirrors TypeScript ``InvalidFormatError`` and Rust
+            ``OutputFormatError::Unknown`` for cross-SDK parity.
     """
     if output_format == "yaml":
         if kwargs:
@@ -57,4 +61,5 @@ def get_writer(
         from apcore_toolkit.output.http_proxy_writer import HTTPProxyRegistryWriter
 
         return HTTPProxyRegistryWriter(**kwargs)
-    raise ValueError(f"Unknown output format: {output_format!r}")
+
+    raise InvalidFormatError(output_format)
