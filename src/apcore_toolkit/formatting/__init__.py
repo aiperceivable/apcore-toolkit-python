@@ -3,5 +3,15 @@
 from __future__ import annotations
 
 from apcore_toolkit.formatting.markdown import to_markdown
+from apcore_toolkit.formatting.surface import (
+    format_module,
+    format_modules,
+    format_schema,
+)
 
-__all__ = ["to_markdown"]
+__all__ = [
+    "format_module",
+    "format_modules",
+    "format_schema",
+    "to_markdown",
+]
