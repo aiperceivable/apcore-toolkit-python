@@ -222,12 +222,6 @@ def deploy(env: str, tag: str = "latest") -> dict:
 
 Input and output schemas are inferred from PEP 484 type annotations. Use `include` / `exclude` regex filters to control which module IDs are registered.
 
-## Requirements
-
-- Python >= 3.11
-- apcore >= 0.19.0
-- pydantic >= 2.0
-- PyYAML >= 6.0
 
 ## Documentation
 
