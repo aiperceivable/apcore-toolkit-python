@@ -23,7 +23,7 @@ keywords = [
     "toolkit",
 ]
 dependencies = [
-    "apcore>=0.20.0",
+    "apcore>=0.21.0",
     "pydantic>=2.0",
     "PyYAML>=6.0",
 ]

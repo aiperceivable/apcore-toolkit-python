@@ -3,10 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 
-## [0.6.0] - 2026-05-05
+## [0.6.0] - 2026-05-07
 
 ### Changed
 
+- **`apcore` minimum version bumped from 0.20.0 to 0.21.0** — `pyproject.toml` `dependencies` now requires `apcore>=0.21.0`. Toolkit only imports stable apcore surface (`ModuleAnnotations`, `DEFAULT_ANNOTATIONS`, `ModuleExample`, `Registry`, `ErrorCodes`, `parse_docstring`, `errors.ModuleError`); the 0.21.0 additions (`discoverable` field on `ModuleAnnotations`, `PreviewResult`, `Change`, `ephemeral.*` namespace) are automatically handled — `ModuleAnnotations.from_dict()` picks up `discoverable` transparently, and `dataclasses.asdict()` / `dataclasses.replace()` propagate the new field without code changes. `AIEnhancer` derives its field set from `dataclasses.fields(ModuleAnnotations)` at import time, so it also picks up `discoverable` automatically. Full pytest suite verified against apcore 0.21.0.
 - **`apcore` minimum version bumped from 0.19.0 to 0.20.0** — `pyproject.toml` `dependencies` now requires `apcore>=0.20.0`. Toolkit only imports stable apcore surface (`ModuleAnnotations`, `DEFAULT_ANNOTATIONS`, `ModuleExample`, `Registry`, `ErrorCodes`, `parse_docstring`, `errors.ModuleError`); none of these were affected by 0.20.0 changes. Full pytest suite (585 passed) verified against apcore 0.20.0.
 
 ### Added
