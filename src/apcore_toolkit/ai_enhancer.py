@@ -120,6 +120,9 @@ class AIEnhancer:
         self.threshold = (
             threshold if threshold is not None else self._parse_float_env("APCORE_AI_THRESHOLD", _DEFAULT_THRESHOLD)
         )
+        # batch_size is accepted for forward compatibility but is currently reserved —
+        # all pending modules are submitted one at a time. To be removed or implemented
+        # in a future release.
         self.batch_size = (
             batch_size if batch_size is not None else self._parse_int_env("APCORE_AI_BATCH_SIZE", _DEFAULT_BATCH_SIZE)
         )
@@ -190,7 +193,7 @@ class AIEnhancer:
                 results.append(module)
                 pending.append((idx, module, gaps))
 
-        # TODO: coalesce batch_size modules into a single API call to reduce round-trips
+        # Note: batch_size is reserved; each module submits individually.
         for idx, module, gaps in pending:
             try:
                 enhanced = self._enhance_module(module, gaps)

@@ -397,6 +397,28 @@ class TestRegistryWriterWithVerifiers:
 
 
 # ---------------------------------------------------------------------------
+# Empty-path guard: registry-backed modules have no file path
+# ---------------------------------------------------------------------------
+class TestVerifierEmptyPath:
+    def test_yaml_verifier_empty_path_returns_ok(self):
+        result = YAMLVerifier().verify("", "mod_id")
+        assert result.ok is True
+        assert result.error is None
+
+    def test_syntax_verifier_empty_path_returns_ok(self):
+        result = SyntaxVerifier().verify("", "mod_id")
+        assert result.ok is True
+
+    def test_magic_bytes_verifier_empty_path_returns_ok(self):
+        result = MagicBytesVerifier(b"\x89PNG").verify("", "mod_id")
+        assert result.ok is True
+
+    def test_json_verifier_empty_path_returns_ok(self):
+        result = JSONVerifier().verify("", "mod_id")
+        assert result.ok is True
+
+
+# ---------------------------------------------------------------------------
 # OSError / UnicodeDecodeError handling (regression for missing error guards)
 # ---------------------------------------------------------------------------
 class TestVerifierIOErrors:

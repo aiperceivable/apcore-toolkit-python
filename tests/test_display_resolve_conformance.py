@@ -20,9 +20,7 @@ import pytest
 from apcore_toolkit.display.resolver import DisplayResolver
 from apcore_toolkit.types import ScannedModule
 
-_CONFORMANCE_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "apcore-toolkit" / "conformance" / "fixtures"
-)
+_CONFORMANCE_DIR = Path(__file__).resolve().parent.parent.parent / "apcore-toolkit" / "conformance" / "fixtures"
 
 
 def _load_fixture() -> list[dict[str, Any]]:
@@ -61,9 +59,7 @@ def _assert_partial_match(expected: dict[str, Any], actual: dict[str, Any], path
         if isinstance(exp_val, dict) and isinstance(act_val, dict):
             _assert_partial_match(exp_val, act_val, f"{path}.{key}")
         else:
-            assert act_val == exp_val, (
-                f"\nMismatch at {path}.{key}\nExpected: {exp_val!r}\nActual:   {act_val!r}"
-            )
+            assert act_val == exp_val, f"\nMismatch at {path}.{key}\nExpected: {exp_val!r}\nActual:   {act_val!r}"
 
 
 _CASES = _load_fixture()

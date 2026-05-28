@@ -22,6 +22,8 @@ class YAMLVerifier:
     """Verify that a YAML binding file is parseable and contains required fields."""
 
     def verify(self, path: str, _module_id: str) -> VerifyResult:
+        if not path:
+            return VerifyResult(ok=True)
         try:
             with open(path, encoding="utf-8") as f:
                 parsed = yaml.safe_load(f)
@@ -55,6 +57,8 @@ class SyntaxVerifier:
     """Verify that a Python source file has valid syntax."""
 
     def verify(self, path: str, _module_id: str) -> VerifyResult:
+        if not path:
+            return VerifyResult(ok=True)
         try:
             with open(path, encoding="utf-8") as f:
                 source = f.read()
@@ -100,6 +104,8 @@ class MagicBytesVerifier:
         self._expected = expected
 
     def verify(self, path: str, _module_id: str) -> VerifyResult:
+        if not path:
+            return VerifyResult(ok=True)
         try:
             with open(path, "rb") as f:
                 header = f.read(len(self._expected))
@@ -126,6 +132,8 @@ class JSONVerifier:
         self._schema = schema
 
     def verify(self, path: str, _module_id: str) -> VerifyResult:
+        if not path:
+            return VerifyResult(ok=True)
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)

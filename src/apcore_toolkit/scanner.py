@@ -105,27 +105,6 @@ class BaseScanner(ABC):
             return replace(DEFAULT_ANNOTATIONS, idempotent=True)
         return DEFAULT_ANNOTATIONS
 
-    @staticmethod
-    def generate_suggested_alias(path: str, method: str) -> str:
-        """Generate a dot-separated suggested alias from HTTP route info.
-
-        Convenience wrapper around
-        :func:`apcore_toolkit.http_verb_map.generate_suggested_alias` that
-        exposes the utility on the familiar ``BaseScanner`` interface.
-        Mirrors the pattern of :meth:`infer_annotations_from_method`.
-        Never raises; any string input is accepted.
-
-        Args:
-            path: URL path (e.g., ``"/tasks/user_data/{id}"``).
-            method: HTTP method (e.g., ``"POST"``).
-
-        Returns:
-            Dot-separated alias string (e.g., ``"tasks.user_data.get"``).
-        """
-        from apcore_toolkit.http_verb_map import generate_suggested_alias as _impl
-
-        return _impl(path, method)
-
     def deduplicate_ids(self, modules: list[ScannedModule]) -> list[ScannedModule]:
         """Resolve duplicate module IDs by appending _2, _3, etc.
 

@@ -9,8 +9,9 @@ Extracted from flask-apcore's registry_writer.py into the shared toolkit.
 
 from __future__ import annotations
 
+import inspect
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from apcore_toolkit.output.types import Verifier, WriteResult
 from apcore_toolkit.output.verifiers import RegistryVerifier, run_verifier_chain
@@ -23,6 +24,40 @@ if TYPE_CHECKING:
     from apcore_toolkit.types import ScannedModule
 
 logger = logging.getLogger("apcore_toolkit")
+
+
+class _StreamingFunctionModule:
+    """Adapter that satisfies the apcore StreamingModule Protocol for a streaming target.
+
+    Wraps a FunctionModule for the execute path and delegates stream() to the
+    target object's async stream() method.  Because this class defines an async
+    generator ``stream`` method, ``inspect.isasyncgenfunction(adapter.stream)``
+    returns True and ``isinstance(adapter, StreamingModule)`` returns True under
+    apcore's ``@runtime_checkable`` Protocol — satisfying the Registry's
+    ``_validate_streaming_signature`` check.
+    """
+
+    def __init__(self, base: FunctionModule, streaming_target: Any) -> None:
+        self._base = base
+        self._streaming_target = streaming_target
+        # Mirror every public attribute that Registry/Executor inspects on FunctionModule.
+        self.module_id = base.module_id
+        self.description = base.description
+        self.documentation = base.documentation
+        self.tags = base.tags
+        self.version = base.version
+        self.annotations = base.annotations
+        self.metadata = base.metadata
+        self.examples = base.examples
+        self.input_schema = base.input_schema
+        self.output_schema = base.output_schema
+        # execute is a bound method/closure on FunctionModule — delegate directly.
+        self.execute = base.execute
+
+    async def stream(self, inputs: dict, context: Any) -> AsyncIterator[dict]:
+        """Async generator delegating to the target's stream() method."""
+        async for chunk in self._streaming_target.stream(inputs, context):
+            yield chunk
 
 
 class RegistryWriter:
@@ -92,7 +127,7 @@ class RegistryWriter:
             result = WriteResult(module_id=mod.module_id)
             if verify:
                 result = self._verify(result, mod.module_id, registry)
-            if result.verified and verifiers:
+            if verifiers:
                 chain_result = run_verifier_chain(verifiers, "", mod.module_id)
                 if not chain_result.ok:
                     result = WriteResult(
@@ -109,8 +144,16 @@ class RegistryWriter:
         mod: ScannedModule,
         *,
         allowed_prefixes: list[str] | None = None,
-    ) -> FunctionModule:
-        """Convert a ScannedModule to an apcore FunctionModule.
+    ) -> FunctionModule | _StreamingFunctionModule:
+        """Convert a ScannedModule to an apcore module ready for registry insertion.
+
+        Returns a plain ``FunctionModule`` for non-streaming modules, or a
+        ``_StreamingFunctionModule`` adapter when ``mod.annotations.streaming``
+        is True and the resolved target exposes a valid async ``stream()`` method.
+
+        If streaming is declared but the target has no async ``stream()`` method,
+        a WARNING is logged and the ``streaming`` annotation is cleared so
+        ``Registry.register`` does not raise ``StreamingInterfaceError``.
 
         Args:
             mod: The ScannedModule to convert.
@@ -119,12 +162,52 @@ class RegistryWriter:
                 prefix.
 
         Returns:
-            A FunctionModule instance ready for registry insertion.
+            A module instance ready for registry insertion.
         """
         from apcore import FunctionModule
 
-        func = flatten_pydantic_params(resolve_target(mod.target, allowed_prefixes=allowed_prefixes))
+        raw_target = resolve_target(mod.target, allowed_prefixes=allowed_prefixes)
+        streaming_requested = bool(getattr(mod.annotations, "streaming", False))
 
+        if streaming_requested:
+            stream_method = getattr(raw_target, "stream", None)
+            has_async_stream = callable(stream_method) and (
+                inspect.iscoroutinefunction(stream_method) or inspect.isasyncgenfunction(stream_method)
+            )
+            if has_async_stream:
+                # Target exposes a valid async stream() — build streaming adapter.
+                # Use the target's execute() for the FunctionModule base when available;
+                # fall back to treating the target itself as a callable.
+                execute_callable = getattr(raw_target, "execute", raw_target)
+                func = flatten_pydantic_params(execute_callable)
+                base = FunctionModule(
+                    func=func,
+                    module_id=mod.module_id,
+                    description=mod.description,
+                    documentation=mod.documentation,
+                    tags=mod.tags,
+                    version=mod.version,
+                    annotations=annotations_to_dict(mod.annotations),
+                    metadata=mod.metadata,
+                    examples=mod.examples,
+                )
+                return _StreamingFunctionModule(base=base, streaming_target=raw_target)
+
+            # Streaming requested but no valid async stream() found.
+            logger.warning(
+                "RegistryWriter: module '%s' has annotations.streaming=True but target '%s' "
+                "exposes no async stream() method; clearing streaming flag to avoid "
+                "StreamingInterfaceError at registration. "
+                "Implement stream(self, inputs, context) as an async generator on the target "
+                "or register the module directly via Registry.register().",
+                mod.module_id,
+                mod.target,
+            )
+            ann_dict = {**(annotations_to_dict(mod.annotations) or {}), "streaming": False}
+        else:
+            ann_dict = annotations_to_dict(mod.annotations)
+
+        func = flatten_pydantic_params(raw_target)
         return FunctionModule(
             func=func,
             module_id=mod.module_id,
@@ -132,7 +215,7 @@ class RegistryWriter:
             documentation=mod.documentation,
             tags=mod.tags,
             version=mod.version,
-            annotations=annotations_to_dict(mod.annotations),
+            annotations=ann_dict,
             metadata=mod.metadata,
             examples=mod.examples,
         )

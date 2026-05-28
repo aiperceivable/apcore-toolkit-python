@@ -81,6 +81,7 @@ class TestRegistryWriterVerification:
             result = writer.write([sample_module], mock_registry, verify=True)
 
         assert result[0].verified is False
+        assert result[0].verification_error is not None
         assert "not found in registry" in result[0].verification_error
 
     def test_verify_registry_error(
@@ -91,6 +92,7 @@ class TestRegistryWriterVerification:
             result = writer.write([sample_module], mock_registry, verify=True)
 
         assert result[0].verified is False
+        assert result[0].verification_error is not None
         assert "Registry lookup failed" in result[0].verification_error
 
     def test_verify_not_run_in_dry_run(
@@ -124,6 +126,7 @@ class TestRegistryWriterBatchResilience:
             results = writer.write([mod_a, mod_b], mock_registry)
         assert len(results) == 2
         assert results[0].verified is False
+        assert results[0].verification_error is not None
         assert "RuntimeError" in results[0].verification_error
         assert results[1].verified is True
 
@@ -134,4 +137,124 @@ class TestRegistryWriterBatchResilience:
         with patch.object(writer, "_to_function_module", return_value=MagicMock()):
             results = writer.write([sample_module], mock_registry)
         assert results[0].verified is False
+        assert results[0].verification_error is not None
         assert "duplicate" in results[0].verification_error
+
+
+class TestRegistryWriterStreaming:
+    """RegistryWriter streaming-module detection (apcore 0.22.0 StreamingModule interface)."""
+
+    def test_streaming_target_with_async_stream_creates_streaming_adapter(
+        self, writer: RegistryWriter, mock_registry: MagicMock
+    ) -> None:
+        """Target with async stream() → _StreamingFunctionModule adapter registered."""
+        import inspect
+        from typing import Any, AsyncIterator
+        from apcore_toolkit.output.registry_writer import _StreamingFunctionModule
+
+        async def _fake_execute(name: str = "world") -> dict:
+            return {"ok": True}
+
+        class _FakeStreamer:
+            execute = staticmethod(_fake_execute)
+
+            async def stream(self, inputs: dict, context: Any) -> AsyncIterator[dict]:
+                yield {"chunk": 1}
+
+        fake_instance = _FakeStreamer()
+
+        from apcore import ModuleAnnotations
+
+        mod = ScannedModule(
+            module_id="stream.test",
+            description="streaming module",
+            input_schema={},
+            output_schema={},
+            tags=[],
+            target="fake:target",
+            annotations=ModuleAnnotations(streaming=True),
+        )
+
+        with patch("apcore_toolkit.output.registry_writer.resolve_target", return_value=fake_instance):
+            results = writer.write([mod], mock_registry)
+
+        assert len(results) == 1
+        registered_module = mock_registry.register.call_args[0][1]
+        assert isinstance(
+            registered_module, _StreamingFunctionModule
+        ), f"Expected _StreamingFunctionModule, got {type(registered_module)}"
+        assert inspect.isasyncgenfunction(registered_module.stream), (
+            "stream() must be an async generator so the registry's " "_validate_streaming_signature passes"
+        )
+
+    def test_streaming_annotation_no_stream_method_clears_flag_and_warns(
+        self, writer: RegistryWriter, mock_registry: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """annotations.streaming=True but no stream() → warning logged, streaming cleared."""
+        import logging
+
+        def plain_func(name: str = "world") -> dict:
+            return {}
+
+        from apcore import ModuleAnnotations
+
+        mod = ScannedModule(
+            module_id="stream.no_impl",
+            description="claims streaming but isn't",
+            input_schema={},
+            output_schema={},
+            tags=[],
+            target="fake:plain_func",
+            annotations=ModuleAnnotations(streaming=True),
+        )
+
+        with patch("apcore_toolkit.output.registry_writer.resolve_target", return_value=plain_func):
+            with caplog.at_level(logging.WARNING, logger="apcore_toolkit"):
+                results = writer.write([mod], mock_registry)
+
+        assert len(results) == 1
+        assert results[0].verified is True
+        registered_module = mock_registry.register.call_args[0][1]
+        streaming_val = getattr(registered_module.annotations, "streaming", None)
+        assert streaming_val is False, f"Expected streaming=False after clearing, got {streaming_val!r}"
+        assert any(
+            "streaming" in r.message.lower() for r in caplog.records
+        ), "Expected a warning mentioning 'streaming'"
+
+    def test_non_streaming_module_produces_no_streaming_adapter(
+        self, writer: RegistryWriter, mock_registry: MagicMock, sample_module: ScannedModule
+    ) -> None:
+        """Non-streaming modules follow the existing FunctionModule path."""
+        from apcore import FunctionModule
+        from apcore_toolkit.output.registry_writer import _StreamingFunctionModule
+
+        with patch.object(writer, "_to_function_module") as mock_to_fm:
+            mock_to_fm.return_value = MagicMock(spec=FunctionModule)
+            writer.write([sample_module], mock_registry)
+
+        registered = mock_registry.register.call_args[0][1]
+        assert not isinstance(registered, _StreamingFunctionModule)
+
+
+class TestRegistryWriterCustomVerifierAlwaysRuns:
+    """Custom verifiers must run even when the built-in registry check fails."""
+
+    def test_custom_verifiers_run_when_builtin_fails(
+        self, writer: RegistryWriter, mock_registry: MagicMock, sample_module: ScannedModule
+    ) -> None:
+        # Built-in check: registry.get returns None → verified=False
+        mock_registry.get.return_value = None
+        call_count = 0
+
+        class CountingVerifier:
+            def verify(self, path: str, module_id: str):
+                nonlocal call_count
+                call_count += 1
+                from apcore_toolkit.output.types import VerifyResult
+
+                return VerifyResult(ok=True)
+
+        with patch.object(writer, "_to_function_module", return_value=MagicMock()):
+            writer.write([sample_module], mock_registry, verify=True, verifiers=[CountingVerifier()])
+
+        assert call_count == 1, "Custom verifier must run even when built-in registry check fails"
