@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.8.1] - 2026-06-12
+
+Patch release. Bumps the required apcore runtime floor to 0.24.0. Toolkit API surface and code unchanged; all 701 tests pass without modification against 0.24.0.
+
+### Changed
+
+- Required runtime bumped to `apcore>=0.24.0` — bumped from `>=0.22.0`. Toolkit's stable surface is unaffected by the 0.22 → 0.24 delta.
+
+  Key 0.23.0–0.24.0 changes visible to toolkit users (indirect runtime effects):
+  - `Registry.register()` behaviour is unchanged for `RegistryWriter` (sequential registration path). The 0.24.0 per-instance `ToggleState` scoping means disabling a module via one `APCore` no longer bleeds into the registry under test — improves isolation in test suites that construct multiple `APCore` instances in one process.
+  - AI error-recovery metadata (`user_fixable`, `ai_guidance`) is now auto-populated on `ModuleError` at the apcore framework level (0.23.0), so errors surfaced through `RegistryWriter` carry this metadata automatically with no toolkit changes required.
+  - `CircuitBreakerMiddleware` constructor is breaking in 0.23.0 (old `failure_threshold`/`success_threshold` removed). Toolkit does not use this middleware; no toolkit changes required.
+
 ## [0.8.0] - 2026-05-28
 
 Aligned release across Python, TypeScript, and Rust. Bumps the required apcore runtime to 0.22.0.
