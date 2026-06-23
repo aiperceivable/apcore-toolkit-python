@@ -579,3 +579,71 @@ class TestExtractOutputSchema:
         result = extract_output_schema(operation)
         # 200 should win over 204
         assert result["type"] == "integer"
+
+    def test_integer_status_code_keys(self) -> None:
+        """Frameworks like django-ninja emit integer status-code keys
+        (``{200: ...}``) rather than strings. Matching must not crash and
+        must still extract the 2xx body."""
+        operation = {
+            "responses": {
+                200: {
+                    "content": {
+                        "application/json": {"schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}
+                    }
+                }
+            }
+        }
+        result = extract_output_schema(operation)
+        assert result["properties"]["ok"]["type"] == "boolean"
+
+    def test_mixed_int_and_str_status_keys(self) -> None:
+        """A mixed int/str keyset must not crash ``sorted()``; lowest 2xx wins."""
+        operation = {
+            "responses": {
+                200: {"content": {"application/json": {"schema": {"type": "integer"}}}},
+                "default": {"content": {"application/json": {"schema": {"type": "string"}}}},
+            }
+        }
+        result = extract_output_schema(operation)
+        assert result["type"] == "integer"
+
+    def test_none_response_and_content_are_tolerated(self) -> None:
+        """An explicit ``null`` response or ``content`` (empty/204-style) must
+        fall back to the default schema rather than raising AttributeError."""
+        assert extract_output_schema({"responses": {"200": None}}) == {
+            "type": "object",
+            "properties": {},
+        }
+        assert extract_output_schema({"responses": {"200": {"content": None}}}) == {
+            "type": "object",
+            "properties": {},
+        }
+
+    def test_none_responses_is_tolerated(self) -> None:
+        assert extract_output_schema({"responses": None}) == {
+            "type": "object",
+            "properties": {},
+        }
+
+
+class TestExtractInputSchemaNullTolerance:
+    """Real generators can emit explicit ``null`` for requestBody / content /
+    properties / required; none of these may crash extraction."""
+
+    def test_none_request_body(self) -> None:
+        result = extract_input_schema({"requestBody": None})
+        assert result["properties"] == {}
+
+    def test_none_content(self) -> None:
+        result = extract_input_schema({"requestBody": {"content": None}})
+        assert result["properties"] == {}
+
+    def test_none_properties_and_required(self) -> None:
+        operation = {
+            "requestBody": {
+                "content": {"application/json": {"schema": {"type": "object", "properties": None, "required": None}}}
+            }
+        }
+        result = extract_input_schema(operation)
+        assert result["properties"] == {}
+        assert result["required"] == []

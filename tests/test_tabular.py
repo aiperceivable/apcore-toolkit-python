@@ -87,9 +87,9 @@ class TestFormatCsvNestedValues:
         assert ": " not in cell
 
     def test_unicode_in_nested_object_not_ascii_escaped(self) -> None:
-        row = {"label": {"zh": "中文"}}
+        row = {"label": {"zh": "\u4e2d\u6587"}}
         result = format_csv([row])
-        assert "中文" in result
+        assert "\u4e2d\u6587" in result
         assert "\\u" not in result
 
 
@@ -149,11 +149,11 @@ class TestFormatCsvScalarTypes:
 class TestFormatCsvBom:
     def test_bom_off_by_default(self) -> None:
         result = format_csv([{"a": 1}])
-        assert not result.startswith("﻿")
+        assert not result.startswith("\ufeff")
 
     def test_bom_prepended_when_enabled(self) -> None:
         result = format_csv([{"a": 1}], bom=True)
-        assert result.startswith("﻿")
+        assert result.startswith("\ufeff")
         assert result[1:] == "a\r\n1\r\n"
 
 
@@ -189,9 +189,9 @@ class TestFormatJsonl:
         assert json.loads(result.rstrip("\n")) == row
 
     def test_unicode_not_escaped(self) -> None:
-        row = {"label": "中文"}
+        row = {"label": "\u4e2d\u6587"}
         result = format_jsonl([row])
-        assert "中文" in result
+        assert "\u4e2d\u6587" in result
         assert "\\u" not in result
 
     def test_insertion_order_preserved(self) -> None:

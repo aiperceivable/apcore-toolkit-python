@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.9.0] - 2026-06-23
+
+Minor release. Hardens the OpenAPI parser against real-world framework output that the previous version assumed away. No public API changes; all 713 tests pass (7 new regression tests added).
+
+### Fixed
+
+- **`extract_output_schema` crashed on integer status-code keys** — django-ninja (and other generators that build the OpenAPI doc as an in-memory dict) emit response keys as integers (`{200: ...}`) rather than strings. `re.match(r"^2\d\d$", k)` raised `TypeError` on a non-`str` key, and `sorted()` raised `TypeError` on a mixed int/str keyset. Response keys are now normalized to strings before matching, mirroring the always-string keys the TypeScript/Rust SDKs receive from JSON parsing. (`openapi.py`)
+- **`extract_output_schema` / `extract_input_schema` crashed on explicit `null`** — a `null` response, `content`, `requestBody`, `schema`, `properties`, or `required` (legitimately emitted for empty/204-style responses and bodyless operations) raised `AttributeError`/`TypeError`. All such accesses now fall back to an empty container via `or {}` / `or []`. (`openapi.py`)
+
+
 ## [0.8.1] - 2026-06-12
 
 Patch release. Bumps the required apcore runtime floor to 0.24.0. Toolkit API surface and code unchanged; all 701 tests pass without modification against 0.24.0.

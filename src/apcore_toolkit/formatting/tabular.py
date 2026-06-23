@@ -15,7 +15,7 @@ import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-_BOM = "﻿"
+_BOM = "\ufeff"
 
 
 def format_csv(

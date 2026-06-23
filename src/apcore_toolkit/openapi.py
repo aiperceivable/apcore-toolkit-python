@@ -191,25 +191,27 @@ def extract_input_schema(
             if param.get("required", False):
                 schema["required"].append(name)
 
-    # Request body
-    request_body = operation.get("requestBody", {})
-    content = request_body.get("content", {})
+    # Request body — use `or {}` so an explicit `null` (e.g. `"requestBody": null`
+    # or `"content": null` from real generators) falls back to an empty dict
+    # rather than crashing on `None.get(...)`.
+    request_body = operation.get("requestBody") or {}
+    content = request_body.get("content") or {}
     json_content = {}
     for ct, ct_content in content.items():
         if ct.startswith("application/json") or ct == "application/vnd.api+json":
             json_content = ct_content
             break
-    body_schema = json_content.get("schema", {})
+    body_schema = json_content.get("schema") or {}
     if body_schema:
         body_schema = resolve_schema(body_schema, openapi_doc)
-        for name, prop in body_schema.get("properties", {}).items():
+        for name, prop in (body_schema.get("properties") or {}).items():
             if name in schema["properties"]:
                 logger.warning(
                     "extract_input_schema: body field %r conflicts with path/query param — body wins",
                     name,
                 )
             schema["properties"][name] = prop
-        for req in body_schema.get("required", []):
+        for req in body_schema.get("required") or []:
             if req not in schema["required"]:
                 schema["required"].append(req)
 
@@ -234,10 +236,16 @@ def extract_output_schema(
     Returns:
         The output JSON Schema dict, or a default empty object schema.
     """
-    responses = operation.get("responses", {})
+    raw_responses = operation.get("responses") or {}
+    # Normalize keys to strings before matching: some frameworks (e.g.
+    # django-ninja) emit integer status-code keys like `{200: ...}` rather
+    # than `"200"`, which would crash `re.match` (expects str) and `sorted()`
+    # on a mixed int/str keyset. Mirrors the always-string keys the
+    # TypeScript/Rust SDKs receive from JSON parsing.
+    responses = {str(k): v for k, v in raw_responses.items()} if isinstance(raw_responses, dict) else {}
     for status_code in sorted(k for k in responses if re.match(r"^2\d\d$", k)):
-        response = responses.get(status_code, {})
-        content = response.get("content", {})
+        response = responses.get(status_code) or {}
+        content = response.get("content") or {}
         json_content: dict[str, Any] = {}
         for ct, ct_content in content.items():
             if ct.startswith("application/json") or ct == "application/vnd.api+json":
