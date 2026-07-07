@@ -290,9 +290,7 @@ class TestAnnotationRoundTrip:
 
         registry = Registry()
         mod = self._module(ModuleAnnotations(destructive=True, requires_approval=True))
-        with patch(
-            "apcore_toolkit.output.registry_writer.resolve_target", return_value=_handler
-        ):
+        with patch("apcore_toolkit.output.registry_writer.resolve_target", return_value=_handler):
             RegistryWriter().write([mod], registry)
 
         definition = registry.get_definition("orders.delete_order")
@@ -319,9 +317,7 @@ class TestAnnotationRoundTrip:
 
         registry = Registry()
         mod = self._module(ModuleAnnotations(requires_approval=True))
-        with patch(
-            "apcore_toolkit.output.registry_writer.resolve_target", return_value=_handler
-        ):
+        with patch("apcore_toolkit.output.registry_writer.resolve_target", return_value=_handler):
             HookOnlyWriter().write([mod], registry)
 
         # Hooks ran...
