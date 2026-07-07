@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("apcore_toolkit")
 
+# Sentinel distinguishing "derive annotations from the module" from an explicit
+# (possibly empty) annotations override passed to ``_build_function_module``.
+_UNSET: Any = object()
+
 
 class _StreamingFunctionModule:
     """Adapter that satisfies the apcore StreamingModule Protocol for a streaming target.
@@ -155,6 +159,14 @@ class RegistryWriter:
         a WARNING is logged and the ``streaming`` annotation is cleared so
         ``Registry.register`` does not raise ``StreamingInterfaceError``.
 
+        Subclasses SHOULD NOT override this method — doing so has repeatedly
+        dropped fields such as ``annotations`` (silently disabling approval/ACL
+        gating that keys on ``requires_approval``). Override the narrow hooks
+        instead: :meth:`_adapt_func` for framework-specific callable adaptation,
+        and :meth:`_build_input_schema` / :meth:`_build_output_schema` for
+        explicit schema models. Field mapping to ``FunctionModule`` stays
+        centralized in :meth:`_build_function_module`.
+
         Args:
             mod: The ScannedModule to convert.
             allowed_prefixes: Forwarded to :func:`resolve_target` — when set,
@@ -164,8 +176,6 @@ class RegistryWriter:
         Returns:
             A module instance ready for registry insertion.
         """
-        from apcore import FunctionModule
-
         raw_target = resolve_target(mod.target, allowed_prefixes=allowed_prefixes)
         streaming_requested = bool(getattr(mod.annotations, "streaming", False))
 
@@ -179,18 +189,8 @@ class RegistryWriter:
                 # Use the target's execute() for the FunctionModule base when available;
                 # fall back to treating the target itself as a callable.
                 execute_callable = getattr(raw_target, "execute", raw_target)
-                func = flatten_pydantic_params(execute_callable)
-                base = FunctionModule(
-                    func=func,
-                    module_id=mod.module_id,
-                    description=mod.description,
-                    documentation=mod.documentation,
-                    tags=mod.tags,
-                    version=mod.version,
-                    annotations=annotations_to_dict(mod.annotations),
-                    metadata=mod.metadata,
-                    examples=mod.examples,
-                )
+                func = flatten_pydantic_params(self._adapt_func(execute_callable, mod))
+                base = self._build_function_module(mod, func)
                 return _StreamingFunctionModule(base=base, streaming_target=raw_target)
 
             # Streaming requested but no valid async stream() found.
@@ -203,21 +203,71 @@ class RegistryWriter:
                 mod.module_id,
                 mod.target,
             )
-            ann_dict = {**(annotations_to_dict(mod.annotations) or {}), "streaming": False}
-        else:
-            ann_dict = annotations_to_dict(mod.annotations)
+            func = flatten_pydantic_params(self._adapt_func(raw_target, mod))
+            cleared = {**(annotations_to_dict(mod.annotations) or {}), "streaming": False}
+            return self._build_function_module(mod, func, annotations=cleared)
 
-        func = flatten_pydantic_params(raw_target)
+        func = flatten_pydantic_params(self._adapt_func(raw_target, mod))
+        return self._build_function_module(mod, func)
+
+    def _adapt_func(self, func: Any, mod: ScannedModule) -> Any:
+        """Hook: framework-specific adaptation of the resolved callable, applied
+        BEFORE Pydantic flattening (e.g. strip a leading ``request`` parameter).
+
+        Default: return the callable unchanged. Override this — not
+        :meth:`_to_function_module` — so behavioral annotations and other fields
+        are never accidentally dropped.
+        """
+        return func
+
+    def _build_input_schema(self, mod: ScannedModule) -> Any | None:
+        """Hook: explicit input Pydantic model, skipping function introspection.
+
+        Default ``None`` — ``FunctionModule`` generates the model from the
+        callable signature. Adapters with an authoritative scanned schema
+        (e.g. OpenAPI) override this to build a model from ``mod.input_schema``.
+        """
+        return None
+
+    def _build_output_schema(self, mod: ScannedModule) -> Any | None:
+        """Hook: explicit output Pydantic model. See :meth:`_build_input_schema`."""
+        return None
+
+    def _build_function_module(
+        self,
+        mod: ScannedModule,
+        func: Any,
+        *,
+        annotations: Any = _UNSET,
+    ) -> FunctionModule:
+        """Single, centralized ``ScannedModule`` -> ``FunctionModule`` field mapping.
+
+        Every field a scanned module carries — including the behavioral
+        ``annotations`` that approval/ACL gating depends on — is forwarded here,
+        in one place, so no subclass override can silently drop it.
+
+        Args:
+            mod: The source scanned module.
+            func: The final callable (already adapted and flattened).
+            annotations: Override for the annotations dict; when ``_UNSET`` it is
+                derived from ``mod.annotations``. Used to clear ``streaming``.
+        """
+        from apcore import FunctionModule
+
+        ann = annotations_to_dict(mod.annotations) if annotations is _UNSET else annotations
         return FunctionModule(
             func=func,
             module_id=mod.module_id,
             description=mod.description,
-            documentation=mod.documentation,
+            documentation=getattr(mod, "documentation", None),
             tags=mod.tags,
             version=mod.version,
-            annotations=ann_dict,
-            metadata=mod.metadata,
-            examples=mod.examples,
+            annotations=ann,
+            metadata=getattr(mod, "metadata", None),
+            display=getattr(mod, "display", None),
+            examples=getattr(mod, "examples", None),
+            input_schema=self._build_input_schema(mod),
+            output_schema=self._build_output_schema(mod),
         )
 
     @staticmethod

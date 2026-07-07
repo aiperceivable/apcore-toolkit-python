@@ -7,6 +7,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
 from apcore_toolkit.ai_enhancer import AIEnhancer, Enhancer
 from apcore_toolkit.binding_loader import BindingLoader, BindingLoadError
+from apcore_toolkit.conformance import assert_annotations_preserved
 from apcore_toolkit.display import DisplayResolver
 from apcore_toolkit.formatting import (
     format_csv,
@@ -67,6 +68,7 @@ __all__ = [
     "AIEnhancer",
     "BindingLoadError",
     "BindingLoader",
+    "assert_annotations_preserved",
     "DisplayResolver",
     "BaseScanner",
     "ConventionScanner",

@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.10.0] - 2026-07-07
+
+Centralize `ScannedModule` -> `FunctionModule` field mapping so subclass writers can no longer silently drop fields, and ship a reusable conformance verifier adapters run in their own suites. Addresses aiperceivable/apcore-toolkit-python#7 (items 1 & 2). All 719 tests pass (6 new).
+
+### Changed
+
+- **`RegistryWriter._to_function_module` no longer builds `FunctionModule` inline; field mapping is centralized in a new `_build_function_module`.** Adapters previously overrode the whole `_to_function_module` (for framework-specific target/func adaptation) and hand-copied the field list — which repeatedly dropped `annotations`, silently disabling approval/ACL gating that keys on `requires_approval`. Subclasses should now override only the narrow hooks:
+  - `_adapt_func(func, mod)` — framework-specific callable adaptation before Pydantic flattening (e.g. stripping a leading `request` param); default is identity.
+  - `_build_input_schema(mod)` / `_build_output_schema(mod)` — explicit Pydantic models from an authoritative scanned schema; default `None` (function introspection).
+  The centralized builder forwards **all** carried fields, including `annotations` and (newly) `display`, so no override can drop them. Existing behavior is unchanged for callers that do not override the hooks.
+
+### Added
+
+- **`apcore_toolkit.conformance.assert_annotations_preserved(writer, scanned_module, registry)`** — a reusable, framework-agnostic verifier (raises `AssertionError`; no pytest dependency) that registers a module and asserts its behavioral annotations survive `get_definition`. Adapters import it into their own test suites so a dropped-annotations regression fails loudly everywhere (item 2 of #7). Exported from the package root.
+- Round-trip regression tests using a real `Registry` (not a mock): the base writer preserves `annotations` through `scan -> register -> get_definition`, and a hook-only subclass cannot drop them; plus tests for the conformance verifier itself.
+
+
 ## [0.9.0] - 2026-06-23
 
 Minor release. Hardens the OpenAPI parser against real-world framework output that the previous version assumed away. No public API changes; all 713 tests pass (7 new regression tests added).

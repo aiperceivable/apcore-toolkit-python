@@ -30,7 +30,8 @@ pip install apcore-toolkit
 | `BindingLoader` | Parses `.binding.yaml` files back into `ScannedModule` objects (pure-data inverse of `YAMLWriter`, with loose/strict modes) |
 | `BindingLoadError` | Exception raised when binding parsing fails; carries `file_path`, `module_id`, `missing_fields`, `reason` |
 | `PythonWriter` | Generates `@module`-decorated Python wrapper files |
-| `RegistryWriter` | Registers modules directly into an `apcore.Registry` |
+| `RegistryWriter` | Registers modules directly into an `apcore.Registry`. Subclasses customize only the `_adapt_func` / `_build_input_schema` / `_build_output_schema` hooks; field mapping (incl. `annotations`) is centralized so no override can silently drop a field |
+| `assert_annotations_preserved` | Conformance check for adapter test suites: registers a module and asserts its behavioral annotations (`requires_approval` / `destructive`) survive `get_definition` — guards against a writer silently disabling approval/ACL gating |
 | `HTTPProxyRegistryWriter` | Registers HTTP proxy modules that forward requests to a running API (requires `pip install apcore-toolkit[http-proxy]`) |
 | `Enhancer` | Pluggable protocol for metadata enhancement |
 | `AIEnhancer` | SLM-based metadata enhancement for scanned modules |
@@ -117,6 +118,25 @@ from apcore_toolkit import RegistryWriter
 registry = Registry()
 writer = RegistryWriter()
 writer.write(modules, registry)
+```
+
+### Conformance Verification
+
+Approval and ACL gating key on a module's `requires_approval` annotation, which is
+only reachable if annotations survive `scan → register → get_definition`. A writer
+that drops them disables that gate **silently**. Run the shared conformance check in
+your adapter's test suite so any such regression fails loudly:
+
+```python
+from apcore import ModuleAnnotations, Registry
+from apcore_toolkit import assert_annotations_preserved
+
+def test_writer_preserves_annotations():
+    module = my_scanned_module(  # a ScannedModule with a resolvable target
+        annotations=ModuleAnnotations(destructive=True, requires_approval=True),
+    )
+    # Raises AssertionError if annotations were dropped or changed.
+    assert_annotations_preserved(MyRegistryWriter(), module, Registry())
 ```
 
 ### Output Format Factory

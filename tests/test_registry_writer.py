@@ -258,3 +258,75 @@ class TestRegistryWriterCustomVerifierAlwaysRuns:
             writer.write([sample_module], mock_registry, verify=True, verifiers=[CountingVerifier()])
 
         assert call_count == 1, "Custom verifier must run even when built-in registry check fails"
+
+
+def _handler(user_id: int) -> dict:
+    """A real resolvable callable for round-trip registration tests."""
+    return {"user_id": user_id}
+
+
+class TestAnnotationRoundTrip:
+    """Behavioral annotations must survive scan -> register -> get_definition,
+    or approval/ACL gating that keys on ``requires_approval`` silently no-ops.
+
+    These use a REAL apcore Registry (not a MagicMock) so the round-trip is
+    actually exercised — the earlier writer tests mock the registry and would
+    not catch a dropped-annotations regression.
+    """
+
+    def _module(self, annotations):
+        return ScannedModule(
+            module_id="orders.delete_order",
+            description="Delete an order",
+            input_schema={"type": "object", "properties": {"user_id": {"type": "integer"}}},
+            output_schema={"type": "object"},
+            tags=["orders"],
+            target="unused:patched",
+            annotations=annotations,
+        )
+
+    def test_base_writer_preserves_annotations_into_real_registry(self) -> None:
+        from apcore import ModuleAnnotations, Registry
+
+        registry = Registry()
+        mod = self._module(ModuleAnnotations(destructive=True, requires_approval=True))
+        with patch(
+            "apcore_toolkit.output.registry_writer.resolve_target", return_value=_handler
+        ):
+            RegistryWriter().write([mod], registry)
+
+        definition = registry.get_definition("orders.delete_order")
+        assert definition.annotations is not None, "annotations were dropped during registration"
+        assert definition.annotations.destructive is True
+        assert definition.annotations.requires_approval is True
+
+    def test_hook_only_subclass_cannot_drop_annotations(self) -> None:
+        """A subclass that customizes ONLY the narrow hooks (not
+        ``_to_function_module``) still preserves annotations — this is the point
+        of centralizing field mapping in ``_build_function_module``."""
+        from apcore import ModuleAnnotations, Registry
+        from pydantic import create_model
+
+        adapted: list[str] = []
+
+        class HookOnlyWriter(RegistryWriter):
+            def _adapt_func(self, func, mod):  # type: ignore[no-untyped-def]
+                adapted.append(mod.module_id)
+                return func
+
+            def _build_input_schema(self, mod):  # type: ignore[no-untyped-def]
+                return create_model("CustomInput")
+
+        registry = Registry()
+        mod = self._module(ModuleAnnotations(requires_approval=True))
+        with patch(
+            "apcore_toolkit.output.registry_writer.resolve_target", return_value=_handler
+        ):
+            HookOnlyWriter().write([mod], registry)
+
+        # Hooks ran...
+        assert adapted == ["orders.delete_order"]
+        definition = registry.get_definition("orders.delete_order")
+        # ...and annotations still survived (subclass had no way to drop them).
+        assert definition.annotations is not None
+        assert definition.annotations.requires_approval is True
