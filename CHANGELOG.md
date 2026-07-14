@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.10.1] - 2026-07-14
+
+Patch release. Bumps the required `apcore` floor to `0.26.0` to align the ecosystem on the 0.26.0 governance layer (Execution Policy §7.9, governance events, no-handler fail-loud — additive, no breaking changes). No code or API changes; all 719 tests pass unmodified against apcore 0.26.0.
+
 ## [0.10.0] - 2026-07-07
 
 Centralize `ScannedModule` -> `FunctionModule` field mapping so subclass writers can no longer silently drop fields, and ship a reusable conformance verifier adapters run in their own suites. Addresses aiperceivable/apcore-toolkit-python#7 (items 1 & 2). All 719 tests pass (6 new).
