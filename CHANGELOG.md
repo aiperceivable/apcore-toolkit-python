@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.10.2] - 2026-09-01
+
+Patch release. Bumps the required `apcore` floor to `0.28.0` to align the ecosystem on the 0.27.0/0.28.0 governance layer (argument-scoped approval, `ACLRule.approval`, `ExecutionPolicy.resolve()` call-site parameters, `Executor.governance_state()`, ACL effect/condition hardening) — none of it touches a surface this toolkit uses (confirmed via grep: no `ACL`, `ExecutionPolicy`, `Executor`, or `SchemaValidator` usage anywhere in `src/`). No code or API changes; all 719 tests pass unmodified against apcore 0.28.0.
+
+Note: apcore 0.28.0 also makes dict-declared `input_schema`/`output_schema` validation actually enforce (previously a no-op). `HTTPProxyRegistryWriter` registers such modules but this toolkit never routes one through a live apcore `Executor`, so nothing here changes — but a framework adapter that executes a dict-schema module built by this writer through apcore 0.28.0 will now see real validation where it previously saw none.
+
 ## [0.10.1] - 2026-07-14
 
 Patch release. Bumps the required `apcore` floor to `0.26.0` to align the ecosystem on the 0.26.0 governance layer (Execution Policy §7.9, governance events, no-handler fail-loud — additive, no breaking changes). No code or API changes; all 719 tests pass unmodified against apcore 0.26.0.
