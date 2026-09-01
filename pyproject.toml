@@ -58,6 +58,15 @@ src = ["src"]
 target-version = "py311"
 line-length = 120
 
+# Pinned explicitly (matches ruff's pre-0.16 default) because ruff 0.16 widened its
+# implicit default selection (adds SIM/UP/RUF/BLE/TRY/PLC/G/C4/I and more), which made
+# CI fail on a fresh `pip install` (unpinned ruff floor) while a locally uv-pinned
+# ruff 0.15.x still reported zero issues on the same code. Without an explicit
+# `select`, the enforced rule set silently depends on whichever ruff version happens
+# to be installed.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 [tool.apdev]
 base_package = "apcore_toolkit"
 src_dir = "src"
