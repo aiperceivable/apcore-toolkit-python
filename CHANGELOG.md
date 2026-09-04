@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.11.0] - 2026-09-04
+
+Feature release: ships `OpenAPIScanner` and `TuiViewModel`, version-aligned with the TypeScript and Rust SDKs.
+
+### Added
+
+- **`OpenAPIScanner`, `derive_module_id`, `load_spec`** (`apcore_toolkit.openapi_scanner`) — turn an OpenAPI 3.0/3.1 document into a `ScannedModule` list, one module per operation. `load_spec` accepts a local path or `http(s)://` URL (the latter requires the `http-proxy` extra); YAML parsing uses the already-required `PyYAML` dependency. See `docs/features/openapi-scanner.md` in `apcore-toolkit`.
+- **`TuiViewModel`, `Column`, `Row`, `Cell`, `Sort`, `Filter`, `TonePalette`, `ToneRule`, `Group`, `modules_to_view_model`, `format_view_model`** (`apcore_toolkit.tui_view_model`) — byte-equivalent module-list view-model builder and canonical JSON encoder. See `docs/features/tui-view-model.md`.
+- 35 new conformance tests (`tests/test_openapi_scan_conformance.py`, `tests/test_view_model_conformance.py`) against the shared corpus in `apcore-toolkit/conformance/fixtures/`, plus 6 hand-written malformed-input regression tests (`tests/test_openapi_scanner_malformed_input.py`).
+
+### Fixed
+
+- **`OpenAPIScanner` mis-parsed a non-array `tags` field.** `list(operation.get("tags") or [])` silently character-split a string value instead of degrading to `[]`. Found by a cross-SDK audit against the TypeScript/Rust ports, which already required an array. Fixed; regression test added.
+- Tightened several other malformed-input type checks (`deprecated` now requires a literal boolean rather than truthy-coercing; `operationId`/`info.version`/`summary` now require `str`; the "no 2xx response" check now matches ASCII digits only, not any Unicode decimal digit) to match TypeScript/Rust behaviour. None affect a valid OpenAPI document.
+
+All 760 tests pass (was 719 at 0.10.2). `mypy --strict` and `ruff` clean.
+
 ## [0.10.2] - 2026-09-01
 
 Patch release. Bumps the required `apcore` floor to `0.28.0` to align the ecosystem on the 0.27.0/0.28.0 governance layer (argument-scoped approval, `ACLRule.approval`, `ExecutionPolicy.resolve()` call-site parameters, `Executor.governance_state()`, ACL effect/condition hardening) — none of it touches a surface this toolkit uses (confirmed via grep: no `ACL`, `ExecutionPolicy`, `Executor`, or `SchemaValidator` usage anywhere in `src/`). No code or API changes; all 719 tests pass unmodified against apcore 0.28.0.
