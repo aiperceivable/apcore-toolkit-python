@@ -36,7 +36,7 @@ _BUILTIN_TYPE_TO_SCHEMA: dict[type, dict[str, Any]] = {
 }
 
 
-class ConventionScanner:
+class ConventionScanner(BaseScanner):
     """Scan a directory of plain Python files for public functions.
 
     Converts each discovered function into a ScannedModule with
@@ -95,6 +95,9 @@ class ConventionScanner:
 
         logger.info("ConventionScanner: discovered %d modules from %s", len(modules), commands_path)
         return modules
+
+    def get_source_name(self) -> str:
+        return "convention"
 
     def _scan_file(self, py_file: Path, base_dir: Path) -> list[ScannedModule]:
         """Scan a single Python file for public functions."""

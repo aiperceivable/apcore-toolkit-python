@@ -14,6 +14,16 @@ def scanner():
     return ConventionScanner()
 
 
+class TestConventionScannerBaseScanner:
+    """ConventionScanner must actually inherit from BaseScanner (§5.14)."""
+
+    def test_is_instance_of_base_scanner(self, scanner):
+        assert isinstance(scanner, BaseScanner)
+
+    def test_get_source_name(self, scanner):
+        assert scanner.get_source_name() == "convention"
+
+
 class TestConventionScannerBasic:
     def test_scan_simple_function(self, scanner, tmp_path):
         """Scan a file with one typed function."""
