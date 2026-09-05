@@ -51,6 +51,9 @@ pip install apcore-toolkit
 | `format_schema` _(v0.6.0)_ | Surface-aware JSON Schema renderer (styles: `prose`, `table`, `json`) with depth control |
 | `format_csv` _(v0.7.0)_ | Byte-equivalent RFC 4180 CSV emitter — header = union of keys across all rows; nested cells = canonical JSON; CRLF terminator |
 | `format_jsonl` _(v0.7.0)_ | Byte-equivalent JSON Lines emitter — canonical compact JSON per row, LF terminator |
+| `OpenAPIScanner` _(v0.11.0)_ | Scans a parsed OpenAPI 3.0/3.1 document into `ScannedModule` instances, one per operation; supports `include`/`exclude` filters, deprecation handling, and `transform_operation` / `derive_module_id` / `transform_module` hooks |
+| `derive_module_id` / `load_spec` _(v0.11.0)_ | `derive_module_id` computes the default sanitized module ID for an OpenAPI path/method/operation; `load_spec` is a convenience helper that fetches/parses an OpenAPI document from a local path or `http(s)://` URL |
+| `TuiViewModel` family _(v0.11.0)_ | `modules_to_view_model` builds a byte-equivalent `TuiViewModel` (columns, rows, filter/sort intent, tag-color rules) from scanned modules; `format_view_model` renders it to canonical compact JSON. Supporting types: `Column`, `Row`, `Cell`, `Sort`, `Filter`, `TonePalette`, `ToneRule`, `Group` |
 | `flatten_pydantic_params` | Converts Pydantic model parameters to flat kwargs |
 | `resolve_target` | Resolves "module.path:function_name" to callable |
 | `SCANNER_VERB_MAP` | Canonical mapping of scanner verbs (`get` / `list` / `create` / ...) to HTTP methods |
