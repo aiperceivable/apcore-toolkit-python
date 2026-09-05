@@ -14,7 +14,7 @@ import dataclasses
 import pytest
 from apcore import DEFAULT_ANNOTATIONS
 
-from apcore_toolkit.tui_view_model import Filter, modules_to_view_model
+from apcore_toolkit.tui_view_model import Cell, Filter, modules_to_view_model
 from apcore_toolkit.types import ScannedModule
 
 # The 9 canonical boolean flags `filter.annotations` is allowed to recognize.
@@ -93,3 +93,25 @@ class TestAnnotationFilterRejectsNonCanonicalNames:
         modules = [_module(annotations)]
         vm = modules_to_view_model(modules, columns=("module_id",), filter=Filter(annotations=("extra",)))
         assert len(vm.rows) == 0
+
+
+class TestCellToDictToneSuppressedForTags:
+    """`tone` is only a defined field for text/badge/symbol cells per the wire-
+    format spec's Cell schema table — "tags" has no `tone` entry there, and
+    Rust's `Cell::Tags` variant has no `tone` field at all (structurally
+    cannot carry one). A hand-built toned "tags" cell must not serialize a
+    `tone` key, or Python/TypeScript output would diverge from what Rust can
+    even represent for the same conceptual state."""
+
+    def test_tags_cell_with_tone_omits_tone_key(self):
+        cell = Cell(kind="tags", values=["users", "read-only"], tone="positive")
+        d = cell.to_dict()
+        assert "tone" not in d
+        assert d == {"kind": "tags", "values": ["users", "read-only"]}
+
+    def test_text_cell_with_tone_still_includes_tone_key(self):
+        # Sanity check: the suppression is specific to kind="tags", not a
+        # blanket removal of tone handling.
+        cell = Cell(kind="text", value="active", tone="info")
+        d = cell.to_dict()
+        assert d["tone"] == "info"
