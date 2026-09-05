@@ -73,9 +73,7 @@ class TestAnnotationFilterRejectsNonCanonicalNames:
         annotations = DEFAULT_ANNOTATIONS
         assert annotations.pagination_style == "cursor"
         modules = [_module(annotations)]
-        vm = modules_to_view_model(
-            modules, columns=("module_id",), filter=Filter(annotations=("pagination_style",))
-        )
+        vm = modules_to_view_model(modules, columns=("module_id",), filter=Filter(annotations=("pagination_style",)))
         assert len(vm.rows) == 0
 
     def test_cache_ttl_is_not_a_recognized_flag(self):

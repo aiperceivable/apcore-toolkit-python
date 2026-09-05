@@ -358,7 +358,9 @@ def modules_to_view_model(
 
     if sort is not None and sort.key in _SORTABLE_KEYS:
         reverse = sort.direction == "desc"
-        resolved.sort(key=lambda entry: _sort_key(sort.key, entry[0], alias=entry[1], description=entry[2]), reverse=reverse)
+        resolved.sort(
+            key=lambda entry: _sort_key(sort.key, entry[0], alias=entry[1], description=entry[2]), reverse=reverse
+        )
 
     rows: list[Row] = []
     for module, alias, description in resolved:

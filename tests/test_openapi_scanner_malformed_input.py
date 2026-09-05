@@ -61,7 +61,11 @@ def test_info_version_non_string_falls_back_to_default() -> None:
     """A non-string `info.version` (e.g. a JSON number) must fall back to
     the documented default `"1.0.0"`, not leak a non-string value into the
     `str`-typed `version` field."""
-    spec = {"openapi": "3.0.3", "info": {"title": "t", "version": 1.5}, "paths": {"/widgets": {"get": {"responses": {"200": {"description": "ok"}}}}}}
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": "t", "version": 1.5},
+        "paths": {"/widgets": {"get": {"responses": {"200": {"description": "ok"}}}}},
+    }
     modules = OpenAPIScanner().scan(spec)
     assert modules[0].version == "1.0.0"
 
@@ -84,9 +88,10 @@ def test_summary_non_string_falls_through_to_description() -> None:
 
 
 def test_2xx_status_check_is_ascii_only() -> None:
-    """A fullwidth-digit status key (e.g. "2２２") must NOT count
-    as a 2xx success response — only ASCII digits match, so the module
-    still gets the "no 2xx response defined" warning. Matches TypeScript's
-    non-unicode `\\d` and Rust's `is_ascii_digit()`."""
-    modules = _scan({"/widgets": {"get": {"responses": {"2２２": {"description": "fullwidth 200"}}}}})
+    """A fullwidth-digit status key (Unicode U+FF12, "\\uff12\\uff12") must
+    NOT count as a 2xx success response — only ASCII digits match, so the
+    module still gets the "no 2xx response defined" warning. Matches
+    TypeScript's non-unicode `\\d` and Rust's `is_ascii_digit()`."""
+    fullwidth_status = "2" + "\uff12\uff12"
+    modules = _scan({"/widgets": {"get": {"responses": {fullwidth_status: {"description": "fullwidth 200"}}}}})
     assert any("no 2xx response defined" in w for w in modules[0].warnings)

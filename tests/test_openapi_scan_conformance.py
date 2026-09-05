@@ -42,9 +42,7 @@ def _skip_if_x_skip_true(path: str, method: str, operation: dict[str, Any]) -> d
     return operation
 
 
-def _custom_name_for_operation_id_custom_else_default(
-    path: str, method: str, operation: dict[str, Any]
-) -> str | None:
+def _custom_name_for_operation_id_custom_else_default(path: str, method: str, operation: dict[str, Any]) -> str | None:
     if operation.get("operationId") == "custom":
         return "custom.name"
     return None
@@ -56,7 +54,10 @@ def _always_returns_dup_op(path: str, method: str, operation: dict[str, Any]) ->
 
 _HOOKS: dict[str, Any] = {
     "skip_if_x_skip_true": ("transform_operation", _skip_if_x_skip_true),
-    "custom_name_for_operation_id_custom_else_default": ("derive_module_id", _custom_name_for_operation_id_custom_else_default),
+    "custom_name_for_operation_id_custom_else_default": (
+        "derive_module_id",
+        _custom_name_for_operation_id_custom_else_default,
+    ),
     "always_returns_dup_op": ("derive_module_id", _always_returns_dup_op),
 }
 

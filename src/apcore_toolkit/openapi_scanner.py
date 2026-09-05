@@ -27,9 +27,7 @@ __all__ = ["OpenAPIScanner", "derive_module_id", "load_spec"]
 # Only these path-item keys are treated as HTTP operations (OpenAPI 3.x Path
 # Item Object). Everything else (`summary`, `parameters`, `servers`, `$ref`,
 # vendor `x-*` extensions, ...) is skipped.
-_RECOGNIZED_METHODS: frozenset[str] = frozenset(
-    {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-)
+_RECOGNIZED_METHODS: frozenset[str] = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9_.\-]")
 _DOT_RUN_RE = re.compile(r"\.+")
@@ -253,9 +251,10 @@ class OpenAPIScanner(BaseScanner):
                 output_schema = extract_output_schema(operation, spec)
                 responses = operation.get("responses") or {}
                 # `[0-9]` rather than `\d`: Python's `\d` matches any Unicode
-                # decimal digit (e.g. fullwidth "２"), while TypeScript's
-                # `\d` and Rust's `is_ascii_digit()` are ASCII-only. An
-                # explicit ASCII class keeps this check identical everywhere.
+                # decimal digit (e.g. fullwidth digits, U+FF10-FF19), while
+                # TypeScript's `\d` and Rust's `is_ascii_digit()` are
+                # ASCII-only. An explicit ASCII class keeps this check
+                # identical everywhere.
                 has_success = isinstance(responses, dict) and any(
                     re.match(r"^2[0-9][0-9]$", str(status)) for status in responses
                 )
