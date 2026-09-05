@@ -294,8 +294,11 @@ class OpenAPIScanner(BaseScanner):
                 # latter silently character-splits a non-array string value
                 # (`list("foo")` -> `["f","o","o"]`) instead of degrading to
                 # an empty list. Matches TypeScript/Rust, which both already
-                # required an array.
-                tags = list(raw_tags) if isinstance(raw_tags, list) else []
+                # required an array. Non-string entries within the array are
+                # also dropped rather than passed through, since
+                # `ScannedModule.tags` is documented/typed as `list[str]` —
+                # matches the Rust SDK's `filter_map(Value::as_str)`.
+                tags = [t for t in raw_tags if isinstance(t, str)] if isinstance(raw_tags, list) else []
 
                 module = ScannedModule(
                     module_id=mid,

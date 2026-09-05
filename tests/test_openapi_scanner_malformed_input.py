@@ -35,6 +35,18 @@ def test_tags_non_array_degrades_to_empty_list_not_character_split() -> None:
     assert modules[0].tags == []
 
 
+def test_tags_array_drops_non_string_entries() -> None:
+    """`"tags": ["users", 5, null, "active"]` must silently drop the
+    non-string entries (`5`, `null`) and preserve the string entries in
+    original order — `ScannedModule.tags` is documented/typed as
+    `list[str]`, matching the Rust SDK's `filter_map(Value::as_str)`."""
+    modules = _scan(
+        {"/widgets": {"get": {"tags": ["users", 5, None, "active"], "responses": {"200": {"description": "ok"}}}}}
+    )
+    assert len(modules) == 1
+    assert modules[0].tags == ["users", "active"]
+
+
 def test_operation_id_non_string_is_omitted_from_metadata() -> None:
     """A non-string `operationId` (e.g. a JSON number) must not leak into
     `metadata.openapi.operation_id`."""
