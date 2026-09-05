@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 
-## [0.11.0] - 2026-09-04
+## [0.11.0] - 2026-09-05
 
 Feature release: ships `OpenAPIScanner` and `TuiViewModel`, version-aligned with the TypeScript and Rust SDKs.
 
@@ -12,6 +12,10 @@ Feature release: ships `OpenAPIScanner` and `TuiViewModel`, version-aligned with
 - **`OpenAPIScanner`, `derive_module_id`, `load_spec`** (`apcore_toolkit.openapi_scanner`) — turn an OpenAPI 3.0/3.1 document into a `ScannedModule` list, one module per operation. `load_spec` accepts a local path or `http(s)://` URL (the latter requires the `http-proxy` extra); YAML parsing uses the already-required `PyYAML` dependency. See `docs/features/openapi-scanner.md` in `apcore-toolkit`.
 - **`TuiViewModel`, `Column`, `Row`, `Cell`, `Sort`, `Filter`, `TonePalette`, `ToneRule`, `Group`, `modules_to_view_model`, `format_view_model`** (`apcore_toolkit.tui_view_model`) — byte-equivalent module-list view-model builder and canonical JSON encoder. See `docs/features/tui-view-model.md`.
 - 35 new conformance tests (`tests/test_openapi_scan_conformance.py`, `tests/test_view_model_conformance.py`) against the shared corpus in `apcore-toolkit/conformance/fixtures/`, plus 6 hand-written malformed-input regression tests (`tests/test_openapi_scanner_malformed_input.py`).
+
+### Changed
+
+- **Required `apcore` floor raised to `0.29.0`.** apcore-python 0.29.0's SDK-visible surface is confined to the approval and ACL governance layer: `ApprovalRequest.caller_id` / `.action` (additive, both with safe defaults, so no existing keyword construction breaks), `CancelToken.raise_if_cancelled()` (additive alias for `check()`, which is unchanged and not deprecated), and `ACL.__init__` now re-validating every rule it is handed — breaking only for a caller that constructs a well-formed rule, mutates its `callers` / `targets` into an empty or malformed pattern array, and then passes it to `ACL(rules=[...])` for the first time. None of that touches the surface this toolkit imports: `Registry`, `FunctionModule`, `ModuleAnnotations`, `DEFAULT_ANNOTATIONS`, `ModuleExample`, `ErrorCodes` and `apcore.errors.ModuleError` are the complete set (confirmed by grepping every `from apcore` / `import apcore` in `src/`; no `ACL`, `ApprovalRequest`, `CancelToken`, `ExecutionPolicy` or `Executor` reference exists outside doc prose). No code or API changes, and all 760 tests pass unmodified against apcore 0.29.0.
 
 ### Fixed
 
