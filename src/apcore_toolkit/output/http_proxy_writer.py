@@ -25,6 +25,7 @@ Framework-specific ``ScannedModule`` subclasses with top-level
 """
 
 import logging
+import math
 import re
 from collections.abc import Callable
 from typing import Any
@@ -107,6 +108,13 @@ class HTTPProxyRegistryWriter:
         parsed = urlparse(base_url)
         if parsed.scheme not in ("http", "https"):
             raise ValueError(f"Invalid base_url scheme {parsed.scheme!r} — must be 'http' or 'https'")
+        # Reject a non-finite or non-positive timeout up-front (0, negative,
+        # NaN, +/-inf) rather than deferring to undefined `httpx` client
+        # behaviour. Mirrors the Rust `HTTPProxyRegistryWriter::new` check
+        # (`timeout_secs.is_finite() && timeout_secs > 0.0`) so the two SDKs
+        # stay behaviourally aligned.
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError(f"Invalid timeout {timeout!r} — must be a finite number greater than 0")
         self._base_url = base_url
         self._auth_header_factory = auth_header_factory
         self._timeout = timeout

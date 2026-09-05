@@ -58,6 +58,26 @@ class TestHTTPProxyRegistryWriterBaseURL:
         HTTPProxyRegistryWriter(base_url=good_url)
 
 
+class TestHTTPProxyRegistryWriterTimeout:
+    """Behavioural parity with Rust's ``HTTPProxyRegistryWriter::new``:
+    the constructor must reject a non-finite or non-positive ``timeout``
+    up-front instead of deferring to undefined ``httpx`` client behaviour.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_timeout",
+        [0, -1, -0.5, float("nan"), float("inf"), float("-inf")],
+    )
+    def test_init_rejects_non_finite_or_non_positive_timeout(self, bad_timeout: float) -> None:
+        with pytest.raises(ValueError, match="timeout"):
+            HTTPProxyRegistryWriter(base_url="http://x", timeout=bad_timeout)
+
+    @pytest.mark.parametrize("good_timeout", [0.001, 1, 60.0, 3600])
+    def test_init_accepts_positive_finite_timeout(self, good_timeout: float) -> None:
+        # Must not raise.
+        HTTPProxyRegistryWriter(base_url="http://x", timeout=good_timeout)
+
+
 class TestHTTPProxyRegistryWriter:
     def test_write_registers_all_modules(self) -> None:
         registry = Registry()
