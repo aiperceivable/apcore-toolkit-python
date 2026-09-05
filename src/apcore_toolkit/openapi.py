@@ -193,9 +193,24 @@ def extract_input_schema(
 
     # Request body — use `or {}` so an explicit `null` (e.g. `"requestBody": null`
     # or `"content": null` from real generators) falls back to an empty dict
-    # rather than crashing on `None.get(...)`.
+    # rather than crashing on `None.get(...)`. A malformed but TRUTHY
+    # non-dict value (e.g. `"requestBody": "multipart form"`) would sail
+    # past the `or {}` — guard with `isinstance` so extraction degrades
+    # gracefully instead of raising `AttributeError` on `.get()`.
     request_body = operation.get("requestBody") or {}
+    if not isinstance(request_body, dict):
+        logger.warning(
+            "extract_input_schema: operation.requestBody is not a dict (got %s); ignoring",
+            type(request_body).__name__,
+        )
+        request_body = {}
     content = request_body.get("content") or {}
+    if not isinstance(content, dict):
+        logger.warning(
+            "extract_input_schema: requestBody.content is not a dict (got %s); ignoring",
+            type(content).__name__,
+        )
+        content = {}
     json_content = {}
     for ct, ct_content in content.items():
         if ct.startswith("application/json") or ct == "application/vnd.api+json":
@@ -245,6 +260,16 @@ def extract_output_schema(
     responses = {str(k): v for k, v in raw_responses.items()} if isinstance(raw_responses, dict) else {}
     for status_code in sorted(k for k in responses if re.match(r"^2\d\d$", k)):
         response = responses.get(status_code) or {}
+        # Guard against a malformed but TRUTHY non-dict response value
+        # (e.g. `"responses": {"200": "OK"}`) — `or {}` alone does not
+        # substitute for a truthy string, so `.get()` on it would raise.
+        if not isinstance(response, dict):
+            logger.warning(
+                "extract_output_schema: responses[%r] is not a dict (got %s); ignoring",
+                status_code,
+                type(response).__name__,
+            )
+            continue
         content = response.get("content") or {}
         json_content: dict[str, Any] = {}
         for ct, ct_content in content.items():

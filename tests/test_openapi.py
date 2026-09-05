@@ -647,3 +647,23 @@ class TestExtractInputSchemaNullTolerance:
         result = extract_input_schema(operation)
         assert result["properties"] == {}
         assert result["required"] == []
+
+
+class TestExtractSchemaMalformedTruthyNonDict:
+    """A malformed OpenAPI doc can carry a TRUTHY non-dict value where a dict
+    is expected (e.g. ``"requestBody": "multipart form"`` or a string status
+    entry). Since these values are truthy, ``x.get(...) or {}`` does not
+    substitute, so the code must guard with ``isinstance(x, dict)`` instead
+    of assuming ``.get()`` is always safe. Malformed input must degrade to a
+    warning/empty-schema, never an unhandled ``AttributeError``."""
+
+    def test_string_request_body_does_not_raise(self) -> None:
+        operation = {"requestBody": "multipart form"}
+        result = extract_input_schema(operation)
+        assert result["properties"] == {}
+        assert result["required"] == []
+
+    def test_string_response_entry_does_not_raise(self) -> None:
+        operation = {"responses": {"200": "OK"}}
+        result = extract_output_schema(operation)
+        assert result == {"type": "object", "properties": {}}
