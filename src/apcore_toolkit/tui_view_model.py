@@ -43,6 +43,26 @@ GroupBy = Literal["tag", "prefix"]
 
 _SORTABLE_KEYS: frozenset[str] = frozenset({"module_id", "alias", "description"})
 
+# The 9 canonical boolean flags on ModuleAnnotations (apcore package) that
+# `Filter.annotations` is allowed to reference. Any other attribute name
+# (e.g. `cache_ttl`, `cache_key_fields`, `pagination_style`, `extra` — all
+# non-boolean fields on ModuleAnnotations) is not a recognized filter flag
+# and must not be reflected via getattr(); matches the Rust SDK's hardcoded
+# `match name { "readonly" => ..., _ => false }` in tui_view_model.rs.
+_FILTERABLE_ANNOTATION_FLAGS: frozenset[str] = frozenset(
+    {
+        "readonly",
+        "destructive",
+        "idempotent",
+        "requires_approval",
+        "open_world",
+        "streaming",
+        "cacheable",
+        "paginated",
+        "discoverable",
+    }
+)
+
 # No built-in default column set: `columns` must be explicitly requested by
 # the caller. An empty `columns` tuple yields an empty `columns` array (see
 # conformance fixture `view_model_001_empty_list`) — callers wanting the
@@ -260,6 +280,8 @@ def _passes_filter(module: ScannedModule, flt: Filter | None, *, description: st
             return False
     annotations = module.annotations
     for annotation_name in flt.annotations:
+        if annotation_name not in _FILTERABLE_ANNOTATION_FLAGS:
+            return False
         if not bool(getattr(annotations, annotation_name, False)):
             return False
     # `discoverable` (ModuleAnnotations, default True) is the shipped signal
