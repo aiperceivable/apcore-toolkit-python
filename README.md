@@ -44,7 +44,7 @@ pip install apcore-toolkit
 | `SyntaxVerifier` | Verifies source files are non-empty and readable |
 | `RegistryVerifier` | Verifies modules are registered and retrievable |
 | `MagicBytesVerifier` | Verifies file headers match expected magic bytes |
-| `JSONVerifier` | Verifies JSON files parse correctly |
+| `JSONVerifier` | Verifies JSON files parse correctly; accepts an optional `schema: dict` constructor arg to additionally validate against a JSON Schema (requires `pip install apcore-toolkit[json-schema]`) |
 | `to_markdown` | Converts arbitrary dicts to Markdown with depth control and table heuristics |
 | `format_module` _(v0.6.0)_ | Surface-aware renderer for a single `ScannedModule` (styles: `markdown`, `skill`, `table-row`, `json`) |
 | `format_modules` _(v0.6.0)_ | Batch renderer for a list of `ScannedModule`; supports grouping by tag or module-id prefix |
