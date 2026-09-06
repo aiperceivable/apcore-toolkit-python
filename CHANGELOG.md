@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.11.1] - 2026-09-06
+
+Patch release. Bumps the required `apcore` floor to `0.30.0`. apcore 0.30.0 is confined to the `Config`/`BindingLoader` layer (the §9.2.2 deprecation-warning cadence fix, the missing-binding-directory error message, discarding a set-but-empty path-typed `APCORE_*` override, and `bindings.dir`/`bindings.pattern` becoming canonical defaults) — none of it touches `Registry`, `FunctionModule`, `ModuleAnnotations`, `ModuleExample`, `DEFAULT_ANNOTATIONS`, `ErrorCodes`, or `apcore.errors.ModuleError`, which is the complete set this toolkit imports (confirmed via grep: no `Config`, `BindingLoader`, `ACL`, `ApprovalRequest`, `CancelToken`, `ExecutionPolicy` or `Executor` reference exists in `src/`). No code or API changes; all 798 tests pass unmodified against apcore 0.30.0. `ruff check` clean.
+
 ## [0.11.0] - 2026-09-05
 
 Feature release: ships `OpenAPIScanner` and `TuiViewModel`, version-aligned with the TypeScript and Rust SDKs.
