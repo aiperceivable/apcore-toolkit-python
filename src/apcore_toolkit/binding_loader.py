@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,17 @@ _LOOSE_REQUIRED = ("module_id", "target")
 _MAX_BINDING_FILE_SIZE = 16 * 1024 * 1024  # 16 MiB
 _MAX_BINDING_FILES_PER_DIR = 10_000
 
+#: Canonical default for ``bindings.pattern`` (apcore 0.30 ``schemas/defaults.schema.json``).
+_DEFAULT_BINDING_PATTERN = "*.binding.yaml"
+
+# Rejected-pattern reasons. The shared conformance corpus
+# (apcore-toolkit/conformance/fixtures/binding_pattern.json) asserts the stable
+# identifiers "empty_pattern" and "path_separator"; per
+# docs/features/binding-loader.md the human-readable wording is idiomatic per
+# SDK, so these two constants are Python's phrasing of those two identifiers.
+_EMPTY_PATTERN_REASON = "pattern must not be empty"
+_PATH_SEPARATOR_REASON = "pattern matches file names only; use recursive=True to descend into subdirectories"
+
 # Keys whose presence in a metadata dict is unsafe for cross-runtime
 # round-trip — they correspond to JS prototype-pollution sinks. Filter
 # them at parse time so a malicious or malformed binding YAML cannot
@@ -34,6 +47,134 @@ _MAX_BINDING_FILES_PER_DIR = 10_000
 # entry into downstream consumers (matches the TypeScript loader's
 # PROTO_DENY guard in src/binding-parser.ts).
 _FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"__proto__", "constructor", "prototype"})
+
+
+def _validate_pattern(pattern: str) -> None:
+    """Reject an unusable ``pattern`` before any filesystem access.
+
+    Validating up-front turns an invalid pattern into a diagnostic rather
+    than a silently empty result. ``**/`` is the shape callers reach for
+    first and is wrong here: traversal depth is ``recursive``'s job, and
+    ``pattern`` only ever matches a file *name*.
+
+    Raises:
+        BindingLoadError: pattern is empty or contains a path separator.
+    """
+    if not pattern:
+        raise BindingLoadError(_EMPTY_PATTERN_REASON)
+    if "/" in pattern or "\\" in pattern:
+        raise BindingLoadError(_PATH_SEPARATOR_REASON)
+
+
+def _match_name(pattern: str, name: str) -> bool:
+    """Match a file *name* against ``pattern``; the shared toolkit matcher.
+
+    Two metacharacters are recognised — ``*`` (zero or more characters,
+    including ``.``) and ``?`` (exactly one character). Everything else is a
+    literal, brackets and braces included: character classes and brace
+    expansion are deliberately unsupported because that is precisely where
+    language glob implementations diverge. Matching is case-sensitive on
+    every platform, applies no Unicode normalization, compares Python ``str``
+    code points, and does not exclude leading-dot names.
+
+    This is the normative two-pointer algorithm with single-star backtracking
+    from docs/features/binding-loader.md#normative-matching-algorithm --
+    O(len(pattern) x len(name)) worst case, so a pattern arriving from
+    configuration cannot trigger the exponential blowup a naive recursive
+    "try every split point" matcher suffers on inputs like ``*a*a*a*a*b``.
+
+    Note:
+        ``fnmatch`` and ``Path.glob`` are intentionally *not* used: both
+        implement POSIX character classes, which would make
+        ``[ab].binding.yaml`` match ``a.binding.yaml`` and diverge from the
+        Rust and TypeScript SDKs.
+    """
+    p = 0
+    n = 0
+    star = -1
+    mark = 0
+    p_len = len(pattern)
+    n_len = len(name)
+
+    while n < n_len:
+        if p < p_len and pattern[p] == "?":
+            p += 1
+            n += 1
+        elif p < p_len and pattern[p] == "*":
+            star = p
+            mark = n
+            p += 1  # consume zero characters for now
+        elif p < p_len and pattern[p] == name[n]:
+            p += 1
+            n += 1
+        elif star >= 0:
+            p = star + 1
+            mark += 1
+            n = mark  # let the last '*' eat one more character
+        else:
+            return False
+
+    while p < p_len and pattern[p] == "*":
+        p += 1  # trailing stars may match nothing
+
+    return p == p_len
+
+
+def _iter_candidate_files(root: Path, *, recursive: bool) -> Iterator[Path]:
+    """Yield every regular file under ``root``, without applying any name filter.
+
+    ``recursive`` governs *which directories are traversed* — the immediate
+    directory only, or the whole tree — and nothing else; name filtering is
+    ``_match_name``'s job. Only regular files are yielded, so a directory
+    named to look like a match (``api-b.cli.yaml/``) is never selectable and
+    can never reach the reader as an ``EISDIR``.
+
+    **The file-type check follows symlinks: it tests the target, not the
+    link.** A symlink whose target is a regular file *is* yielded — dropping
+    it would silently lose binding files, a data-loss-shaped regression with
+    no error. A broken symlink is skipped like any other non-file. A symlink
+    whose target is a *directory* is neither yielded nor descended into
+    (``os.walk`` defaults to ``followlinks=False``, and such an entry is
+    classified as a directory, so it never reaches ``file_names``); that is
+    where cycles and tree-escape live.
+
+    Per-entry I/O errors are best-effort: unreadable subdirectories are
+    skipped rather than aborting the walk (``os.walk`` swallows them by
+    default). Errors on ``root`` itself still surface to the caller.
+    """
+    if recursive:
+        for dir_path, _dir_names, file_names in os.walk(root):
+            base = Path(dir_path)
+            for file_name in file_names:
+                candidate = base / file_name
+                # ``is_file`` follows symlinks and is False for a broken one.
+                if candidate.is_file():
+                    yield candidate
+    else:
+        for entry in root.iterdir():
+            if entry.is_file():
+                yield entry
+
+
+def _select_files(root: Path, *, recursive: bool, pattern: str) -> list[Path]:
+    """Return the files ``load`` would read from ``root``, in read order.
+
+    Factored out of :meth:`BindingLoader.load` so the selection contract can
+    be asserted directly — the shared conformance corpus checks *which paths*
+    are selected, which a symlink alias makes unrecoverable from the parsed
+    ``module_id`` values alone.
+
+    ``key=str`` is load-bearing: ``sorted()`` over ``Path`` objects compares
+    ``_str_normcase``, which case-folds on Windows, so ``["M.binding.yaml",
+    "a.binding.yaml"]`` would come back reversed there. Rust's ``PathBuf``
+    ordering and JavaScript's default string sort are already code-point
+    order, so the explicit key is what keeps Python answering identically on
+    every platform.
+    """
+    return sorted(
+        (f for f in _iter_candidate_files(root, recursive=recursive) if _match_name(pattern, f.name)),
+        key=str,
+    )
 
 
 def _safe_metadata(raw: Any) -> dict[str, Any]:
@@ -113,28 +254,46 @@ class BindingLoader:
         *,
         strict: bool = False,
         recursive: bool = False,
+        pattern: str = _DEFAULT_BINDING_PATTERN,
     ) -> list[ScannedModule]:
-        """Load one file or every ``*.binding.yaml`` in a directory.
+        """Load one file, or every matching file in a directory.
 
         Args:
             path: File or directory path.
             strict: Enforce presence of input_schema/output_schema in every
                 binding entry.
             recursive: When ``path`` is a directory, also descend into
-                subdirectories looking for ``*.binding.yaml``. Default
-                ``False`` preserves the flat-layout contract. Ignored when
-                ``path`` is a file.
+                subdirectories. Default ``False`` preserves the flat-layout
+                contract. Governs traversal depth only. Ignored when ``path``
+                is a file.
+            pattern: Matched against each candidate's **file name** — never a
+                directory component, never the full path — at whatever depth
+                traversal reached. Supports ``*`` and ``?`` only; see
+                :func:`_match_name`. The caller resolves the value (e.g. from
+                ``bindings.pattern``); the loader merely matches it. Ignored
+                when ``path`` is a file, exactly like ``recursive``.
 
         Raises:
-            BindingLoadError: if the path is missing, YAML is malformed, or
-                any entry fails validation.
+            BindingLoadError: if ``pattern`` is empty or contains a path
+                separator (checked before any filesystem access), the path is
+                missing, YAML is malformed, or any entry fails validation.
 
         Note:
             Directory loads are all-or-nothing: the first malformed file
             aborts the load and any previously parsed files are discarded.
             Callers that need best-effort aggregation should iterate the
             files themselves and invoke ``load`` per file.
+
+            ``pattern`` narrows *which* files are read; it changes nothing
+            about how they are read. Ordering, the all-or-nothing contract
+            and the safety caps all apply to the matched set unchanged.
+            Matched files are sorted by the path string's code points,
+            case-sensitively, on every platform.
         """
+        # Validated before any filesystem access so an invalid pattern is a
+        # diagnostic rather than a silently empty result.
+        _validate_pattern(pattern)
+
         try:
             import yaml
         except ImportError as exc:  # pragma: no cover
@@ -145,8 +304,13 @@ class BindingLoader:
         if p.is_file():
             files = [p]
         elif p.is_dir():
-            pattern = "**/*.binding.yaml" if recursive else "*.binding.yaml"
-            files = sorted(p.glob(pattern))
+            try:
+                files = _select_files(p, recursive=recursive, pattern=pattern)
+            except OSError as exc:
+                # Per-entry errors during a recursive walk are best-effort
+                # (os.walk swallows them); an error listing the *root* itself
+                # surfaces as BindingLoadError rather than a bare OSError.
+                raise BindingLoadError(f"failed to list directory: {exc}", file_path=str(p)) from exc
             if len(files) > _MAX_BINDING_FILES_PER_DIR:
                 raise BindingLoadError(
                     f"too many files in directory: {len(files)} exceeds limit of {_MAX_BINDING_FILES_PER_DIR}",

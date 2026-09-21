@@ -6,6 +6,23 @@ Public API re-exports for convenient access to core types and utilities.
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
 from apcore_toolkit.ai_enhancer import AIEnhancer, Enhancer
+from apcore_toolkit.auth import (
+    AuthError,
+    AuthorizationDeniedError,
+    AuthorizationExpiredError,
+    AuthorizationProtocolError,
+    CredentialPermissionError,
+    DeviceAuthClient,
+    DeviceAuthConfig,
+    DeviceCodeGrant,
+    DiscoveryError,
+    FileTokenStore,
+    Grant,
+    NoCredentialError,
+    RefreshFailedError,
+    TokenSet,
+    TokenStore,
+)
 from apcore_toolkit.binding_loader import BindingLoader, BindingLoadError
 from apcore_toolkit.conformance import assert_annotations_preserved
 from apcore_toolkit.display import DisplayResolver
@@ -80,6 +97,10 @@ except PackageNotFoundError:
 
 __all__ = [
     "AIEnhancer",
+    "AuthError",
+    "AuthorizationDeniedError",
+    "AuthorizationExpiredError",
+    "AuthorizationProtocolError",
     "BindingLoadError",
     "BindingLoader",
     "assert_annotations_preserved",
@@ -88,15 +109,24 @@ __all__ = [
     "DisplayResolver",
     "BaseScanner",
     "ConventionScanner",
+    "CredentialPermissionError",
+    "DeviceAuthClient",
+    "DeviceAuthConfig",
+    "DeviceCodeGrant",
+    "DiscoveryError",
+    "FileTokenStore",
     "Filter",
+    "Grant",
     "Group",
     "HTTPProxyRegistryWriter",
     "Enhancer",
     "InvalidFormatError",
     "JSONVerifier",
     "MagicBytesVerifier",
+    "NoCredentialError",
     "OpenAPIScanner",
     "PythonWriter",
+    "RefreshFailedError",
     "RegistryVerifier",
     "RegistryWriter",
     "Row",
@@ -104,6 +134,8 @@ __all__ = [
     "ScannedModule",
     "Sort",
     "SyntaxVerifier",
+    "TokenSet",
+    "TokenStore",
     "ToneRule",
     "TonePalette",
     "TuiViewModel",

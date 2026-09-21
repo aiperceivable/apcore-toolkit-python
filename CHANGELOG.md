@@ -3,6 +3,44 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.13.0] - unreleased
+
+Adds the **RFC 8628 Device Authorization Flow client** ([apcore-toolkit#17](https://github.com/aiperceivable/apcore-toolkit/issues/17)) — the protocol half only. The toolkit writes nothing to a terminal: it emits events, and the consumer renders them.
+
+### Added
+
+- **`DeviceAuthClient`, `DeviceAuthConfig`, `TokenSet`, `TokenStore`, `FileTokenStore`, `Grant` / `DeviceCodeGrant`**, and the four extension hooks. See [`docs/features/device-auth.md`](https://github.com/aiperceivable/apcore-toolkit/blob/main/docs/features/device-auth.md). `httpx` is an optional `auth` extra, imported lazily.
+- Asserted against the shared **65-case** corpus (`conformance/fixtures/device_auth.json`). **No HTTP mocking is required**: the state machine is pure over an injected monotonic clock and a scripted response sequence.
+- **V1 is device flow only**, with the `Grant` interface in place so a second grant is one implementation against a stable seam rather than a rewrite. A deliberate scope-down from the proposal's own recommendation — PKCE widens the exact surface whose risk mitigation depends on being narrow, and no consumer has yet named a provider lacking device-flow support.
+
+### Notes
+
+Tokens persist to `~/.config/apcore/credentials.json` (`%APPDATA%\apcore\` on Windows), `0600`, written by atomic replace, keyed by issuer and client id. The path is normative rather than per-SDK precisely so that tools maintaining credential baselines can protect it — `apexe` has added it to its own.
+
+**1017 tests pass** (798 at 0.11.1). `ruff check` and `ruff format --check` clean; `mypy` reports 0 errors in `auth/`.
+
+---
+
+## [0.12.0] - unreleased
+
+Closes a latent spec gap in `BindingLoader` ([apcore-toolkit#18](https://github.com/aiperceivable/apcore-toolkit/issues/18)).
+
+### Added
+
+- **`BindingLoader.load` honours a caller-supplied `pattern`.** apcore 0.30 made `bindings.pattern` a canonical configuration default, but this loader hardcoded the value and had no parameter through which a caller could pass a configured one — so a consumer that needs the loader's *return value*, rather than apcore's registration side effect, silently dropped the key. `apexe` is exactly that consumer: it loads `.binding.yaml` into `ScannedModule`, converts each into its own `CliModule`, and could not call apcore's config-aware loader without bypassing every control `CliModule` exists to apply. Signature is now `load(path, *, strict=False, recursive=False, pattern="*.binding.yaml")` — keyword-only and defaulted, so no existing call changes.
+- The loader takes the resolved value and does **not** read `Config` itself, keeping the pure-data layer dependency-free and leaving the environment > file > default precedence chain with the caller that actually holds a `Config`.
+- **`conformance/fixtures/binding_pattern.json`** (43 shared cases) pins the matcher, the rejected patterns, and how `pattern` composes with `recursive`. The spec carries the matching **algorithm** in pseudocode, not just the syntax — three independent implementations converge only if the algorithm is fixed.
+
+### Changed
+
+- **Directories are never candidates**, at every depth. A directory whose *name* matched was previously handed to the YAML reader. The file-type check **follows symlinks**, so a symlinked binding file is still selected while a symlinked directory is neither selected nor descended into, and a dangling link is skipped rather than aborting the load. Selection is also now sorted with an explicit `key=str`: `sorted()` over `Path` compares `_str_normcase`, which case-folds on Windows, so ordering there disagreed with the TypeScript and Rust SDKs.
+
+### Notes
+
+`pattern` matches the **file name** only. `*` and `?` are the only metacharacters; `[`, `]`, `{`, `}` are literals, because character classes and brace expansion are where language glob implementations diverge. A pattern containing `/` or `\` is rejected before any filesystem access — which makes `**/*.binding.yaml` a diagnostic rather than a mystery, since traversal depth is `recursive`'s job.
+
+**1017 tests pass** (798 at 0.11.1). `ruff check` and `ruff format --check` clean; `mypy` reports 0 errors in `auth/`.
+
 ## [0.11.1] - 2026-09-06
 
 Patch release. Bumps the required `apcore` floor to `0.30.0`. apcore 0.30.0 is confined to the `Config`/`BindingLoader` layer (the §9.2.2 deprecation-warning cadence fix, the missing-binding-directory error message, discarding a set-but-empty path-typed `APCORE_*` override, and `bindings.dir`/`bindings.pattern` becoming canonical defaults) — none of it touches `Registry`, `FunctionModule`, `ModuleAnnotations`, `ModuleExample`, `DEFAULT_ANNOTATIONS`, `ErrorCodes`, or `apcore.errors.ModuleError`, which is the complete set this toolkit imports (confirmed via grep: no `Config`, `BindingLoader`, `ACL`, `ApprovalRequest`, `CancelToken`, `ExecutionPolicy` or `Executor` reference exists in `src/`). No code or API changes; all 798 tests pass unmodified against apcore 0.30.0. `ruff check` clean.

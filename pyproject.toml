@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apcore-toolkit"
-version = "0.11.1"
+version = "0.13.0"
 description = "Shared scanner, schema extraction, and output toolkit for apcore framework adapters"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 http-proxy = ["httpx>=0.24"]
+auth = ["httpx>=0.24"]
 json-schema = ["jsonschema>=4.0"]
 dev = [
     "pytest>=8.0",
@@ -74,3 +75,13 @@ src_dir = "src"
 [tool.mypy]
 python_version = "3.11"
 strict = true
+# Resolve `apcore_toolkit` from the working tree rather than from whatever copy
+# happens to be installed in site-packages. Without this, type checkers fall
+# back to the installed distribution, which can be an older release that lacks
+# symbols the tests import — reported as bogus "unknown import symbol" errors
+# against correct source. pytest is unaffected because `pythonpath` above
+# already prepends `src`; type checkers do not read that setting.
+mypy_path = "src"
+
+[tool.pyright]
+extraPaths = ["src"]

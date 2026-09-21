@@ -33,6 +33,11 @@ pip install apcore-toolkit
 | `RegistryWriter` | Registers modules directly into an `apcore.Registry`. Subclasses customize only the `_adapt_func` / `_build_input_schema` / `_build_output_schema` hooks; field mapping (incl. `annotations`) is centralized so no override can silently drop a field |
 | `assert_annotations_preserved` | Conformance check for adapter test suites: registers a module and asserts its behavioral annotations (`requires_approval` / `destructive`) survive `get_definition` — guards against a writer silently disabling approval/ACL gating |
 | `HTTPProxyRegistryWriter` | Registers HTTP proxy modules that forward requests to a running API (requires `pip install apcore-toolkit[http-proxy]`) |
+| `DeviceAuthClient` | RFC 8628 device-authorization client: `login()`, `ensure_valid()`, `refresh()`, `as_auth_header_factory()` (requires `pip install apcore-toolkit[auth]`) |
+| `DeviceAuthConfig` | Provider configuration and compatibility surface (endpoints, `discover()`, client auth, `error_aliases` / `field_aliases`, per-kind request encoding, extension hooks) |
+| `Grant` / `DeviceCodeGrant` | The grant seam and RFC 8628's polling state machine, deterministic over an injected clock and sleep |
+| `TokenSet` | Opaque bearer credential; `is_expired(skew_seconds=30)`; `repr` redacts both token values |
+| `TokenStore` / `FileTokenStore` | Storage protocol and a portable `0600` file store with atomic replace, keyed `"<issuer>|<client_id>"` |
 | `Enhancer` | Pluggable protocol for metadata enhancement |
 | `AIEnhancer` | SLM-based metadata enhancement for scanned modules |
 | `WriteResult` | Structured result type for all writer operations |
@@ -311,6 +316,59 @@ def deploy(env: str, tag: str = "latest") -> dict:
 ```
 
 Input and output schemas are inferred from PEP 484 type annotations. Use `include` / `exclude` regex filters to control which module IDs are registered.
+
+
+### Device Authorization Flow (RFC 8628)
+
+The **protocol half** of the device grant: the polling state machine, token
+lifecycle, and a portable storage protocol. The toolkit writes nothing to a
+terminal -- no `print`, no spinner, no browser launch. Events reach the consumer
+through callbacks, so the same client works in a CLI, a daemon, or a test.
+
+```python
+from apcore_toolkit import DeviceAuthClient, DeviceAuthConfig, FileTokenStore
+
+config = DeviceAuthConfig(
+    issuer="https://auth.example.com",
+    client_id="apcore-cli",
+    scope=["openid", "api.read"],
+)
+config = config.discover()      # explicit network step, never implicit
+
+client = DeviceAuthClient(config, store=FileTokenStore())
+
+tokens = client.login(
+    on_user_code=lambda *, verification_uri, user_code, **rest: print(
+        f"Visit {verification_uri} and enter {user_code}"
+    ),
+)
+
+tokens = client.ensure_valid()  # refreshes if near expiry
+```
+
+The output plugs into the writer seam that already exists:
+
+```python
+writer = HTTPProxyRegistryWriter(
+    base_url="https://api.example.com",
+    auth_header_factory=client.as_auth_header_factory(),
+)
+```
+
+`as_auth_header_factory()` returns a callable producing a complete header
+mapping (not a bare token), and calls `ensure_valid()` on each invocation, so a
+long-running process refreshes transparently. Providers that diverge from the
+RFC are handled with configuration rather than a fork -- `error_aliases`,
+`field_aliases`, `scope_separator`, `client_auth_method`, per-request-kind
+`request_encoding`, and four extension hooks (`transform_request`,
+`parse_response`, `classify_error`, `http_client`).
+
+Credentials live at `$XDG_CONFIG_HOME/apcore/credentials.json`
+(`~/.config/apcore/credentials.json` on macOS, `%APPDATA%\apcore\credentials.json`
+on Windows), created `0600` and written by atomic replace. `FileTokenStore`
+refuses to read a file with broader permissions. It is deliberately not
+encrypted: a key stored next to its ciphertext is theatre, and real protection
+is an OS keychain -- a consumer concern, reached by implementing `TokenStore`.
 
 
 ## Documentation
