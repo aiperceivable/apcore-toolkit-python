@@ -59,7 +59,10 @@ class YAMLWriter:
 
         output_path = Path(output_dir).resolve()
         if not dry_run:
-            output_path.mkdir(parents=True, exist_ok=True)
+            try:
+                output_path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise WriteError(str(output_path), exc) from exc
 
         results: list[WriteResult] = []
         timestamp = datetime.now(timezone.utc).isoformat()

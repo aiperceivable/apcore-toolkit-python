@@ -7,13 +7,9 @@ matcher and directory-selection code and must produce identical answers. This
 is the cross-SDK behavioural contract for the ``pattern`` argument (see
 ``apcore-toolkit/docs/features/binding-loader.md#pattern-matching``).
 
-Three case kinds:
-
-``validate``
-    A pattern is rejected *before any filesystem access*. The fixture asserts
-    stable identifiers (``empty_pattern`` / ``path_separator``); the
-    human-readable wording is idiomatic per SDK, so this harness maps Python's
-    two reason constants onto those identifiers.
+Two case kinds. There is no ``validate`` kind: as of 0.13.0 every string is a
+valid pattern and the loader never raises on one for syntactic reasons,
+matching apcore's Algorithm A25 requirement 2.
 
 ``match``
     The pure name matcher, with no filesystem involved.
@@ -38,25 +34,16 @@ from typing import Any
 import pytest
 
 from apcore_toolkit.binding_loader import (
-    _EMPTY_PATTERN_REASON,
-    _PATH_SEPARATOR_REASON,
     BindingLoader,
-    BindingLoadError,
     _match_name,
     _select_files,
 )
 
 #: Case kinds this harness dispatches on. A fixture case carrying anything else
 #: would otherwise be parametrized into no test at all and pass vacuously.
-_DISPATCHED_KINDS = frozenset({"validate", "match", "select"})
+_DISPATCHED_KINDS = frozenset({"match", "select"})
 
 _CONFORMANCE_DIR = Path(__file__).resolve().parent.parent.parent / "apcore-toolkit" / "conformance" / "fixtures"
-
-# Python's reason wording -> the stable identifier the shared corpus asserts.
-_REASON_TO_IDENTIFIER = {
-    _EMPTY_PATTERN_REASON: "empty_pattern",
-    _PATH_SEPARATOR_REASON: "path_separator",
-}
 
 
 def _load_fixture() -> list[dict[str, Any]]:
@@ -69,7 +56,6 @@ def _load_fixture() -> list[dict[str, Any]]:
 
 
 _CASES = _load_fixture()
-_VALIDATE_CASES = [c for c in _CASES if c["kind"] == "validate"]
 _MATCH_CASES = [c for c in _CASES if c["kind"] == "match"]
 _SELECT_CASES = [c for c in _CASES if c["kind"] == "select"]
 
@@ -115,26 +101,6 @@ def _make_symlinks(root: Path, symlinks: dict[str, str]) -> None:
         target_path = root.joinpath(*target.split("/"))
         link_path.parent.mkdir(parents=True, exist_ok=True)
         link_path.symlink_to(target_path, target_is_directory=target_path.is_dir())
-
-
-@pytest.mark.parametrize("case", _VALIDATE_CASES, ids=lambda c: c["id"])
-def test_binding_pattern_validate(case: dict[str, Any], tmp_path: Path) -> None:
-    """A rejected pattern raises before any filesystem access.
-
-    The path handed to ``load`` deliberately does not exist: if validation ran
-    *after* the path check, the failure would be ``path does not exist`` and
-    the reason lookup below would miss.
-    """
-    missing_dir = tmp_path / "does-not-exist"
-    with pytest.raises(BindingLoadError) as exc_info:
-        BindingLoader().load(missing_dir, pattern=case["input"]["pattern"])
-
-    identifier = _REASON_TO_IDENTIFIER.get(exc_info.value.reason)
-    assert identifier == case["expected"]["error"], (
-        f"\nCase {case['id']}: {case['description']}\n"
-        f"Expected identifier: {case['expected']['error']!r}\n"
-        f"Actual reason:       {exc_info.value.reason!r}"
-    )
 
 
 @pytest.mark.parametrize("case", _MATCH_CASES, ids=lambda c: c["id"])
@@ -196,4 +162,4 @@ def test_every_fixture_case_is_covered() -> None:
     assert _CASES, f"fixture at {_CONFORMANCE_DIR / 'binding_pattern.json'} has no test_cases"
     unknown = sorted({c["kind"] for c in _CASES} - _DISPATCHED_KINDS)
     assert not unknown, f"fixture has case kinds this harness does not run: {unknown}"
-    assert len(_CASES) == len(_VALIDATE_CASES) + len(_MATCH_CASES) + len(_SELECT_CASES)
+    assert len(_CASES) == len(_MATCH_CASES) + len(_SELECT_CASES)

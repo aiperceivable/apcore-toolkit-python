@@ -36,6 +36,10 @@ class AuthError(Exception):
     """Base class for every error raised by :mod:`apcore_toolkit.auth`."""
 
 
+DeviceAuthError = AuthError
+"""Alias for :class:`AuthError`, for naming parity with the Rust and TypeScript SDKs."""
+
+
 class ConfigurationError(AuthError, ValueError):
     """A :class:`~apcore_toolkit.auth.config.DeviceAuthConfig` is invalid.
 

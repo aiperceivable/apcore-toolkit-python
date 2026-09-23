@@ -3,29 +3,15 @@
 All notable changes to this project will be documented in this file.
 
 
-## [0.13.0] - unreleased
+## [0.12.0] - 2026-09-23
 
-Adds the **RFC 8628 Device Authorization Flow client** ([apcore-toolkit#17](https://github.com/aiperceivable/apcore-toolkit/issues/17)) — the protocol half only. The toolkit writes nothing to a terminal: it emits events, and the consumer renders them.
+The first release since 0.11.1. Adds the **RFC 8628 Device Authorization Flow client** ([apcore-toolkit#17](https://github.com/aiperceivable/apcore-toolkit/issues/17)) — the protocol half only, writing nothing to a terminal — plus `BindingLoader.load`'s `pattern` argument ([#18](https://github.com/aiperceivable/apcore-toolkit/issues/18)), a `$ref` resolution security fix, and the apcore 0.31.0 floor.
 
 ### Added
 
 - **`DeviceAuthClient`, `DeviceAuthConfig`, `TokenSet`, `TokenStore`, `FileTokenStore`, `Grant` / `DeviceCodeGrant`**, and the four extension hooks. See [`docs/features/device-auth.md`](https://github.com/aiperceivable/apcore-toolkit/blob/main/docs/features/device-auth.md). `httpx` is an optional `auth` extra, imported lazily.
 - Asserted against the shared **65-case** corpus (`conformance/fixtures/device_auth.json`). **No HTTP mocking is required**: the state machine is pure over an injected monotonic clock and a scripted response sequence.
 - **V1 is device flow only**, with the `Grant` interface in place so a second grant is one implementation against a stable seam rather than a rewrite. A deliberate scope-down from the proposal's own recommendation — PKCE widens the exact surface whose risk mitigation depends on being narrow, and no consumer has yet named a provider lacking device-flow support.
-
-### Notes
-
-Tokens persist to `~/.config/apcore/credentials.json` (`%APPDATA%\apcore\` on Windows), `0600`, written by atomic replace, keyed by issuer and client id. The path is normative rather than per-SDK precisely so that tools maintaining credential baselines can protect it — `apexe` has added it to its own.
-
-**1017 tests pass** (798 at 0.11.1). `ruff check` and `ruff format --check` clean; `mypy` reports 0 errors in `auth/`.
-
----
-
-## [0.12.0] - unreleased
-
-Closes a latent spec gap in `BindingLoader` ([apcore-toolkit#18](https://github.com/aiperceivable/apcore-toolkit/issues/18)).
-
-### Added
 
 - **`BindingLoader.load` honours a caller-supplied `pattern`.** apcore 0.30 made `bindings.pattern` a canonical configuration default, but this loader hardcoded the value and had no parameter through which a caller could pass a configured one — so a consumer that needs the loader's *return value*, rather than apcore's registration side effect, silently dropped the key. `apexe` is exactly that consumer: it loads `.binding.yaml` into `ScannedModule`, converts each into its own `CliModule`, and could not call apcore's config-aware loader without bypassing every control `CliModule` exists to apply. Signature is now `load(path, *, strict=False, recursive=False, pattern="*.binding.yaml")` — keyword-only and defaulted, so no existing call changes.
 - The loader takes the resolved value and does **not** read `Config` itself, keeping the pure-data layer dependency-free and leaving the environment > file > default precedence chain with the caller that actually holds a `Config`.
@@ -35,11 +21,30 @@ Closes a latent spec gap in `BindingLoader` ([apcore-toolkit#18](https://github.
 
 - **Directories are never candidates**, at every depth. A directory whose *name* matched was previously handed to the YAML reader. The file-type check **follows symlinks**, so a symlinked binding file is still selected while a symlinked directory is neither selected nor descended into, and a dangling link is skipped rather than aborting the load. Selection is also now sorted with an explicit `key=str`: `sorted()` over `Path` compares `_str_normcase`, which case-folds on Windows, so ordering there disagreed with the TypeScript and Rust SDKs.
 
+### Changed — dependency floor
+
+- **Required apcore floor raised to 0.31.0.** apcore 0.31.0 is two joined audit cycles (`PROTOCOL_SPEC` v1.37.0 → v1.59.0): a configuration-surface audit and a deep-chain call-graph audit settling 54 cross-language divergences, five of them security defects. **No code change was needed here** — the toolkit's apcore surface is `Registry`, `Module`/`FunctionModule`, `ModuleAnnotations`, `ModuleExample`, `ModuleDescriptor`, `Context`, `ModuleError`/`ErrorCode`, and none of it moved. All three suites passed unmodified against 0.31.0 — the upgrade itself required no code change (the counts below are the release's final totals, which the two fixes in this release raised further).
+- **Notable for this toolkit specifically:** apcore 0.31.0 adds **Algorithm A25 (`match_glob`)**, which replaces the three disagreeing glob dialects this project reported as [apcore#116](https://github.com/aiperceivable/apcore/issues/116) and [apcore#117](https://github.com/aiperceivable/apcore/issues/117). `BindingLoader.load`'s matcher was specified independently of apcore precisely because there was no single upstream behaviour to inherit; there now is. The two algorithms were compared exhaustively over 85,995 pattern/value pairs and **agree on every one** — no behaviour change is required. The remaining difference is validation, not matching: see the note in [`docs/features/binding-loader.md`](https://github.com/aiperceivable/apcore-toolkit/blob/main/docs/features/binding-loader.md#pattern-matching).
+
+### Changed — `bindings.pattern` is never rejected
+
+- **`load` no longer raises on `pattern` for syntactic reasons.** An earlier draft of this work rejected an empty pattern and any pattern containing `/` or `\`; that validation was removed before release, so `pattern` ships with none. Every string is a valid pattern — `a[b`, `{x,y}`, `**`, `/` and `\` are literals — and one matching no file yields no modules, which is not an error. This adopts apcore 0.31.0's Algorithm A25 requirement 2 (`PROTOCOL_SPEC` §9.2.3) and §5.12.6 clause 6 verbatim.
+- **The reason, recorded because it gives up a better error message.** `**/*.binding.yaml` — the shape a caller reaches for first when they want recursion — was a clear error pointing at `recursive=True`, and is now a silently empty result. That diagnostic was surrendered because the entire purpose of this parameter is to let a caller honour apcore's `bindings.pattern`: a caller resolving the key from `Config` and handing the same string to both components must get the same answer from both, and under 0.12.0 apcore matched nothing while the toolkit raised. Two components reading one configuration key and disagreeing is exactly what [#18](https://github.com/aiperceivable/apcore-toolkit/issues/18) was filed to close. The diagnostic now lives in the docs: *if a pattern selects nothing and contains `/`, you probably wanted `recursive=True`.*
+- **`\` is a literal, not a separator** (A25 requirement 4), so on a filesystem permitting it, `sub\*.binding.yaml` genuinely matches `sub\x.binding.yaml`. Verified identical across all three SDKs end-to-end.
+- Removed with it: Rust's `BindingLoadError::InvalidPattern` variant (back to 7) and `validate_binding_pattern`; TypeScript's `validateBindingPattern`. All were introduced in the unreleased 0.12.0 and were never published. The corpus loses its `validate` case kind; its five cases became `match` cases asserting what those patterns now do, plus a `select` case pinning that the loader surfaces an empty result rather than an error — 44 cases, 0 skipped, in all three SDKs.
+
+### Fixed — security
+
+- **`$ref` sibling keys were discarded during schema resolution, dropping `x-sensitive`.** `deep_resolve_refs` resolved a node like `{"$ref": "…", "x-sensitive": true}` to the referenced schema **alone**, silently losing every key written beside the reference. This is a credential-disclosure path, not a fidelity nicety: apcore reads `x-sensitive` off the **resolved** schema to decide what to redact, and this toolkit's `OpenAPIScanner` produces the `input_schema` / `output_schema` that the output writers register into an apcore `Registry`. A field whose OpenAPI document marked it sensitive beside a `$ref` therefore reached apcore with nothing to redact on, and was logged in plaintext. apcore closed the same hole in its own resolver in 0.31.0 (decision D-98); fixing it there and not here would have left the leak intact for every schema this toolkit produces, because the marking is already gone by the time apcore sees it. All three SDKs were affected identically — so this was not a cross-SDK divergence, and the existing corpus could not have caught it.
+- The resolved target is now shallow-merged with its siblings, **sibling winning** on conflict, at every depth. The merge is deliberately **not** restricted to `x-` extension keys: limiting it to the one symptom that was noticed would leave `description`, `title` and `deprecated` silently dropped. A `$ref` that fails to resolve still contributes its siblings. New shared corpus `conformance/fixtures/ref_resolution.json` (9 cases); normative text in [`docs/features/openapi.md`](docs/features/openapi.md#ref-sibling-keys-are-preserved).
+
 ### Notes
+
+Tokens persist to `~/.config/apcore/credentials.json` (`%APPDATA%\apcore\` on Windows), `0600`, written by atomic replace, keyed by issuer and client id. The path is normative rather than per-SDK precisely so that tools maintaining credential baselines can protect it — `apexe` has added it to its own.
 
 `pattern` matches the **file name** only. `*` and `?` are the only metacharacters; `[`, `]`, `{`, `}` are literals, because character classes and brace expansion are where language glob implementations diverge. A pattern containing `/` or `\` is rejected before any filesystem access — which makes `**/*.binding.yaml` a diagnostic rather than a mystery, since traversal depth is `recursive`'s job.
 
-**1017 tests pass** (798 at 0.11.1). `ruff check` and `ruff format --check` clean; `mypy` reports 0 errors in `auth/`.
+**1031 tests pass** (798 at 0.11.1). `ruff check` and `ruff format --check` clean; `mypy` reports 0 errors in `auth/`.
 
 ## [0.11.1] - 2026-09-06
 

@@ -33,13 +33,6 @@ _MAX_BINDING_FILES_PER_DIR = 10_000
 _DEFAULT_BINDING_PATTERN = "*.binding.yaml"
 
 # Rejected-pattern reasons. The shared conformance corpus
-# (apcore-toolkit/conformance/fixtures/binding_pattern.json) asserts the stable
-# identifiers "empty_pattern" and "path_separator"; per
-# docs/features/binding-loader.md the human-readable wording is idiomatic per
-# SDK, so these two constants are Python's phrasing of those two identifiers.
-_EMPTY_PATTERN_REASON = "pattern must not be empty"
-_PATH_SEPARATOR_REASON = "pattern matches file names only; use recursive=True to descend into subdirectories"
-
 # Keys whose presence in a metadata dict is unsafe for cross-runtime
 # round-trip — they correspond to JS prototype-pollution sinks. Filter
 # them at parse time so a malicious or malformed binding YAML cannot
@@ -47,23 +40,6 @@ _PATH_SEPARATOR_REASON = "pattern matches file names only; use recursive=True to
 # entry into downstream consumers (matches the TypeScript loader's
 # PROTO_DENY guard in src/binding-parser.ts).
 _FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"__proto__", "constructor", "prototype"})
-
-
-def _validate_pattern(pattern: str) -> None:
-    """Reject an unusable ``pattern`` before any filesystem access.
-
-    Validating up-front turns an invalid pattern into a diagnostic rather
-    than a silently empty result. ``**/`` is the shape callers reach for
-    first and is wrong here: traversal depth is ``recursive``'s job, and
-    ``pattern`` only ever matches a file *name*.
-
-    Raises:
-        BindingLoadError: pattern is empty or contains a path separator.
-    """
-    if not pattern:
-        raise BindingLoadError(_EMPTY_PATTERN_REASON)
-    if "/" in pattern or "\\" in pattern:
-        raise BindingLoadError(_PATH_SEPARATOR_REASON)
 
 
 def _match_name(pattern: str, name: str) -> bool:
@@ -290,10 +266,11 @@ class BindingLoader:
             Matched files are sorted by the path string's code points,
             case-sensitively, on every platform.
         """
-        # Validated before any filesystem access so an invalid pattern is a
-        # diagnostic rather than a silently empty result.
-        _validate_pattern(pattern)
-
+        # No pattern validation: every string is a valid pattern and the
+        # loader never raises on one for syntactic reasons, matching apcore's
+        # Algorithm A25 requirement 2 (PROTOCOL_SPEC §9.2.3) and §5.12.6
+        # clause 6. `/` and `\\` are literals, so a pattern carrying one
+        # simply matches no filename. See docs/features/binding-loader.md.
         try:
             import yaml
         except ImportError as exc:  # pragma: no cover

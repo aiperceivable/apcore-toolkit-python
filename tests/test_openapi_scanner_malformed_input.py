@@ -9,7 +9,13 @@ blindly wrapping the wrong-typed value.
 
 from __future__ import annotations
 
-from apcore_toolkit.openapi_scanner import OpenAPIScanner
+import json
+from unittest.mock import patch
+
+import httpx
+import pytest
+
+from apcore_toolkit.openapi_scanner import OpenAPIScanner, load_spec
 
 _BASE = {"openapi": "3.0.3", "info": {"title": "t", "version": "1.0.0"}}
 
@@ -95,3 +101,61 @@ def test_2xx_status_check_is_ascii_only() -> None:
     fullwidth_status = "2" + "\uff12\uff12"
     modules = _scan({"/widgets": {"get": {"responses": {fullwidth_status: {"description": "fullwidth 200"}}}}})
     assert any("no 2xx response defined" in w for w in modules[0].warnings)
+
+
+# --------------------------------------------------------------------------
+# load_spec() \u2014 http(s):// branch
+# --------------------------------------------------------------------------
+
+
+def _http_response(status_code: int, text: str, url: str = "http://example.com/openapi.json") -> httpx.Response:
+    return httpx.Response(status_code, text=text, request=httpx.Request("GET", url))
+
+
+def test_load_spec_fetches_json_from_http_url() -> None:
+    """A successful fetch of a JSON document from an ``http://`` URL is parsed
+    and returned as a dict, and request headers/auth are forwarded."""
+    body = json.dumps({**_BASE, "paths": {}})
+    with patch("httpx.get", return_value=_http_response(200, body)) as mock_get:
+        spec = load_spec(
+            "http://example.com/openapi.json",
+            headers={"X-Custom": "1"},
+            auth_header_factory=lambda: {"Authorization": "Bearer tok"},
+        )
+    assert spec == {**_BASE, "paths": {}}
+    args, kwargs = mock_get.call_args
+    assert args[0] == "http://example.com/openapi.json"
+    assert kwargs["headers"]["X-Custom"] == "1"
+    assert kwargs["headers"]["Authorization"] == "Bearer tok"
+
+
+def test_load_spec_fetches_yaml_from_http_url() -> None:
+    """A successful fetch of a YAML document (non-JSON body) is parsed too."""
+    body = "openapi: 3.0.3\ninfo:\n  title: t\n  version: 1.0.0\npaths: {}\n"
+    with patch("httpx.get", return_value=_http_response(200, body)):
+        spec = load_spec("http://example.com/openapi.yaml")
+    assert spec["openapi"] == "3.0.3"
+
+
+def test_load_spec_non_2xx_response_raises() -> None:
+    """A non-2xx HTTP response must raise rather than silently returning an
+    error page parsed as if it were a spec."""
+    with patch("httpx.get", return_value=_http_response(404, "not found")):
+        with pytest.raises(httpx.HTTPStatusError):
+            load_spec("http://example.com/missing.json")
+
+
+def test_load_spec_malformed_json_body_raises() -> None:
+    """A body that looks like JSON (starts with ``{``) but is malformed must
+    raise rather than returning a partially-parsed/garbage document."""
+    with patch("httpx.get", return_value=_http_response(200, "{not valid json,,,")):
+        with pytest.raises(json.JSONDecodeError):
+            load_spec("http://example.com/openapi.json")
+
+
+def test_load_spec_malformed_yaml_body_raises_value_error() -> None:
+    """A body that is neither valid JSON nor valid YAML must raise a
+    ``ValueError`` that names the source, per ``_parse_document``."""
+    with patch("httpx.get", return_value=_http_response(200, "openapi: [unterminated")):
+        with pytest.raises(ValueError, match="malformed YAML"):
+            load_spec("http://example.com/openapi.yaml")

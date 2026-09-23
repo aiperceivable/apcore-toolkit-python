@@ -607,47 +607,40 @@ class TestMatchName:
         assert _match_name(nfc, nfd) is False
 
 
-class TestPatternValidation:
-    """``pattern`` is validated before any filesystem access."""
-
-    def test_empty_pattern_rejected(self, loader: BindingLoader, tmp_path: Path) -> None:
-        from apcore_toolkit.binding_loader import _EMPTY_PATTERN_REASON
-
-        with pytest.raises(BindingLoadError) as exc_info:
-            loader.load(tmp_path, pattern="")
-        assert exc_info.value.reason == _EMPTY_PATTERN_REASON
+class TestPatternIsNeverRejected:
+    """Every string is a valid pattern; the loader never raises on one for
+    syntactic reasons (apcore Algorithm A25 requirement 2, PROTOCOL_SPEC
+    §5.12.6 clause 6). These cases were the inverse until 0.13.0."""
 
     @pytest.mark.parametrize(
         "pattern",
-        ["sub/*.binding.yaml", "**/*.binding.yaml", "sub\\*.binding.yaml", "*.binding.yaml/", "/"],
+        ["", "sub/*.binding.yaml", "**/*.binding.yaml", "*.binding.yaml/", "/", "a[b", "{x,y}"],
     )
-    def test_path_separator_rejected(self, loader: BindingLoader, tmp_path: Path, pattern: str) -> None:
-        from apcore_toolkit.binding_loader import _PATH_SEPARATOR_REASON
+    def test_odd_pattern_yields_empty_not_an_error(self, loader: BindingLoader, tmp_path: Path, pattern: str) -> None:
+        (tmp_path / "a.binding.yaml").write_text("spec_version: '1.0'\nbindings:\n  - module_id: x\n    target: m:f\n")
+        assert loader.load(tmp_path, pattern=pattern) == []
 
-        with pytest.raises(BindingLoadError) as exc_info:
-            loader.load(tmp_path, pattern=pattern)
-        assert exc_info.value.reason == _PATH_SEPARATOR_REASON
+    def test_backslash_is_a_literal_not_a_separator(self, loader: BindingLoader, tmp_path: Path) -> None:
+        """A25 requirement 4 names ``\\`` a literal, so a filename containing
+        one is matchable rather than a rejected pattern."""
+        (tmp_path / "sub\\x.binding.yaml").write_text(
+            "spec_version: '1.0'\nbindings:\n  - module_id: x\n    target: m:f\n"
+        )
+        modules = loader.load(tmp_path, pattern="sub\\*.binding.yaml")
+        assert [m.module_id for m in modules] == ["x"]
 
-    def test_validation_precedes_filesystem_access(self, loader: BindingLoader, tmp_path: Path) -> None:
-        """A bad pattern is reported even when the path does not exist."""
-        from apcore_toolkit.binding_loader import _EMPTY_PATTERN_REASON, _PATH_SEPARATOR_REASON
+    def test_missing_path_still_raises_for_the_path_not_the_pattern(
+        self, loader: BindingLoader, tmp_path: Path
+    ) -> None:
+        """An odd pattern no longer pre-empts the real error."""
+        with pytest.raises(BindingLoadError, match="(?i)does not exist"):
+            loader.load(tmp_path / "nope", pattern="**/*.binding.yaml")
 
-        missing = tmp_path / "nope"
-        with pytest.raises(BindingLoadError) as empty_exc:
-            loader.load(missing, pattern="")
-        assert empty_exc.value.reason == _EMPTY_PATTERN_REASON
-
-        with pytest.raises(BindingLoadError) as sep_exc:
-            loader.load(missing, pattern="**/*.binding.yaml")
-        assert sep_exc.value.reason == _PATH_SEPARATOR_REASON
-
-    def test_validation_applies_even_for_a_single_file(self, loader: BindingLoader, tmp_path: Path) -> None:
-        """``pattern`` is *ignored* for a file, but still validated: the check
-        runs before the loader can know the path is a file."""
+    def test_single_file_ignores_the_pattern_entirely(self, loader: BindingLoader, tmp_path: Path) -> None:
         f = tmp_path / "one.binding.yaml"
         f.write_text("spec_version: '1.0'\nbindings:\n  - module_id: x\n    target: m:f\n")
-        with pytest.raises(BindingLoadError, match="(?i)file names only"):
-            loader.load(f, pattern="**/*.binding.yaml")
+        modules = loader.load(f, pattern="**/*.binding.yaml")
+        assert [m.module_id for m in modules] == ["x"]
 
 
 class TestLoadPattern:

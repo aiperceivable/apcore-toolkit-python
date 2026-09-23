@@ -71,8 +71,21 @@ def _deep_resolve_refs(
         return schema
 
     if "$ref" in schema:
-        resolved = resolve_ref(schema["$ref"], openapi_doc)
-        return _deep_resolve_refs(resolved, openapi_doc, _depth + 1)
+        # Resolve the target, then merge back any keys that sat BESIDE the
+        # `$ref`. Discarding them silently drops `x-sensitive`, which apcore
+        # reads off the *resolved* schema to decide what to redact — a field
+        # the OpenAPI document marked sensitive then reaches apcore carrying
+        # nothing to redact on. apcore closed the same hole in its own
+        # resolver as D-98 in 0.31.0; see docs/features/openapi.md.
+        resolved = _deep_resolve_refs(resolve_ref(schema["$ref"], openapi_doc), openapi_doc, _depth + 1)
+        siblings = {k: v for k, v in schema.items() if k != "$ref"}
+        if not siblings:
+            return resolved
+        # Siblings are walked at the SAME depth: following the reference has
+        # already consumed a level and they are not a second hop.
+        merged = dict(resolved)
+        merged.update(_deep_resolve_refs(siblings, openapi_doc, _depth))
+        return merged
 
     result = dict(schema)
 

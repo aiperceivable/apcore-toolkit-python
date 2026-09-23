@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import unquote_plus
 from typing import Any
 
+import httpx
 import pytest
 
 from apcore_toolkit.auth import (
@@ -25,6 +26,7 @@ from apcore_toolkit.auth import (
     DeviceCodeResponse,
     FileTokenStore,
     HttpResponse,
+    HttpxTransport,
     MemoryTokenStore,
     PreparedRequest,
     TokenSet,
@@ -694,3 +696,58 @@ def test_timeout_seconds_wins_when_it_is_shorter_than_expires_in() -> None:
         grant.authorize(timeout_seconds=12)
     assert getattr(exc_info.value, "reason", None) == "deadline_exceeded"
     assert delays == [5, 5, 5]
+
+
+# --------------------------------------------------------------------------
+# HttpxTransport.send() — the default, httpx-backed Transport implementation.
+# ``httpx.MockTransport`` swaps out the wire layer so these exercise the real
+# httpx request/response path without any real network I/O.
+# --------------------------------------------------------------------------
+
+
+def test_httpx_transport_send_returns_decoded_response() -> None:
+    """A successful request is decoded into an ``HttpResponse`` carrying the
+    status code, body text, and content-type header."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url == "https://auth.example.com/token"
+        assert request.content == b"grant_type=x"
+        return httpx.Response(200, text='{"access_token": "abc"}', headers={"content-type": "application/json"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        transport = HttpxTransport(client=client)
+        request = PreparedRequest(
+            kind="token",
+            url="https://auth.example.com/token",
+            body="grant_type=x",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response = transport.send(request)
+    finally:
+        client.close()
+
+    assert isinstance(response, HttpResponse)
+    assert response.status == 200
+    assert response.body == '{"access_token": "abc"}'
+    assert response.content_type == "application/json"
+    assert response.is_success is True
+
+
+def test_httpx_transport_send_wraps_httpx_error_as_transport_error() -> None:
+    """An ``httpx.HTTPError`` raised while sending (e.g. a connection failure)
+    must surface as the documented :class:`TransportError`, not the raw
+    httpx exception, so callers only ever catch the auth taxonomy."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        transport = HttpxTransport(client=client)
+        request = PreparedRequest(kind="device", url="https://auth.example.com/device", body="")
+        with pytest.raises(TransportError, match="device request to .* failed"):
+            transport.send(request)
+    finally:
+        client.close()
