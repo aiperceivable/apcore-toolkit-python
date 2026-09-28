@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed — BREAKING
+
+- **`OpenAPIScanner` emits module IDs in apcore's Canonical ID alphabet.** V1 used `operationId` verbatim with case preserved and sanitised to `[A-Za-z0-9_.-]`, an alphabet no apcore registry accepts (PROTOCOL_SPEC §2.7 admits only `[a-z0-9_.]`). The canonical Swagger Petstore (`listPets`, `createPets`, `showPetById`) scanned cleanly and registered **nothing**; so did any path containing a hyphen. The `apcore-mcp` and `apcore-a2a` OpenAPI backends, in all three languages, each shipped a private projection to compensate. The rule now lives in the toolkit, once: `derive_module_id` converts to snake_case with two pinned word-boundary regexes (`getUserById` → `get_user_by_id`, `getHTTPResponse` → `get_http_response`), and `OpenAPIScanner.scan` applies the same normalisation to the **final** ID, after `base_path_prefix` and both ID-affecting hooks (the `transform_module` hook therefore still sees the un-normalised ID). A segment that still begins with a digit (`/v1/2fa`) is not repaired, since that would invent a name: the module is emitted with a pinned legality warning in `ScannedModule.warnings`, and the consumer decides. The raw `operationId` stays in `metadata["openapi"]["operation_id"]`. The normalisation helper is private; `derive_module_id` remains the public entry point. See [`docs/features/openapi-scanner.md`](https://github.com/aiperceivable/apcore-toolkit/blob/main/docs/features/openapi-scanner.md#module_id-derivation).
+  - **Migration:** IDs produced from a camelCase or hyphenated `operationId` or path change (`getUserById` → `get_user_by_id`, `user-profiles.get` → `user_profiles.get`). IDs that were already legal are unchanged. The `apcore-mcp` / `apcore-a2a` projections lowercased without splitting words (`listPets` → `listpets`), so their IDs change too (`list_pets`) once they delegate here; ACL rules and bindings keyed on the old IDs need updating. `include`/`exclude` patterns passed to `scan` match the normalised ID.
+- **Conformance: `openapi_scan.json` 2.0.0** (24 → 29 cases). The driver adds the named hook `always_returns_mixed_case_id` (a `derive_module_id` hook returning `"Custom-Space.GetThing"`, case 029), and now asserts that each named hook is installed under the hook kind it was written for.
+
 
 ## [0.12.0] - 2026-09-23
 

@@ -29,20 +29,64 @@ __all__ = ["OpenAPIScanner", "derive_module_id", "load_spec"]
 # vendor `x-*` extensions, ...) is skipped.
 _RECOGNIZED_METHODS: frozenset[str] = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
 
-_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_.\-]")
-_DOT_RUN_RE = re.compile(r"\.+")
+# `normalize_module_id` patterns. Every character class is an ASCII range
+# written out: Python's `\d`/`\w` and `re.IGNORECASE` are Unicode-aware (under
+# IGNORECASE, `[a-z]` matches U+212A KELVIN SIGN), and the TypeScript and Rust
+# ports must produce byte-identical output from the same algorithm.
+_ACRONYM_BOUNDARY_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_WORD_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
+_OUTSIDE_ID_ALPHABET_RE = re.compile(r"[^A-Za-z0-9_.]")
+_UNDERSCORE_RUN_RE = re.compile(r"_+")
+# Matched with `fullmatch`, not `^...$`: Python's `$` also matches just before
+# a trailing "\n", which would accept a segment the spec's regex rejects.
+_LEGAL_SEGMENT_RE = re.compile(r"[a-z][a-z0-9_]*")
 
 
-def _sanitize(candidate: str) -> str:
-    """Sanitize a module-id candidate per the ``derive_module_id`` algorithm.
+def _normalize_module_id(candidate: str) -> str:
+    """Normalise a module-id candidate into apcore's Canonical ID alphabet.
 
-    Replace every character not in ``[A-Za-z0-9_.-]`` with ``_``, collapse
-    runs of ``.`` into a single ``.``, then strip leading/trailing ``.``
-    and ``_``.
+    Implements ``normalize_module_id`` from ``apcore-toolkit/docs/features/
+    openapi-scanner.md`` § ``module_id`` Derivation, byte-for-byte:
+
+    1. insert ``_`` at word boundaries — ``([A-Z]+)([A-Z][a-z])`` first
+       (acronym followed by a word), then ``([a-z0-9])([A-Z])``;
+    2. replace every character outside ``[A-Za-z0-9_.]`` with ``_``;
+    3. lowercase — only ASCII remains, so this cannot reintroduce a
+       non-ASCII letter (U+212A KELVIN SIGN would lowercase to ``k`` had it
+       survived step 2);
+    4. split on ``.``; per segment collapse ``_`` runs and strip leading and
+       trailing ``_``; drop empty segments;
+    5. join with ``.``.
+
+    Idempotent on its own output. The result can still be an illegal apcore
+    ID — a segment beginning with a digit, or empty — because repairing
+    either would invent a name; the scanner reports that with a warning.
+    Private: the scanner owns the alphabet, and hooks choose only the words.
     """
-    candidate = _SANITIZE_RE.sub("_", candidate)
-    candidate = _DOT_RUN_RE.sub(".", candidate)
-    return candidate.strip("._")
+    candidate = _ACRONYM_BOUNDARY_RE.sub(r"\1_\2", candidate)
+    candidate = _WORD_BOUNDARY_RE.sub(r"\1_\2", candidate)
+    candidate = _OUTSIDE_ID_ALPHABET_RE.sub("_", candidate)
+    candidate = candidate.lower()
+    segments = (_UNDERSCORE_RUN_RE.sub("_", seg).strip("_") for seg in candidate.split("."))
+    return ".".join(seg for seg in segments if seg)
+
+
+def _legality_warning(module_id: str) -> str | None:
+    """Return the pinned warning if *module_id* is not a legal apcore ID.
+
+    Checks only the alphabet (PROTOCOL_SPEC §2.7): the first dot-separated
+    segment failing ``^[a-z][a-z0-9_]*$`` is named — for an empty ID, the
+    empty string. Length and reserved first segments are the registry's to
+    enforce.
+    """
+    for segment in module_id.split("."):
+        if _LEGAL_SEGMENT_RE.fullmatch(segment) is None:
+            return (
+                f"module_id '{module_id}' is not a legal apcore module ID: segment '{segment}' "
+                "must match ^[a-z][a-z0-9_]*$; name this operation with a derive_module_id "
+                "or transform_module hook"
+            )
+    return None
 
 
 def derive_module_id(path: str, method: str, operation: dict[str, Any]) -> str:
@@ -53,35 +97,45 @@ def derive_module_id(path: str, method: str, operation: dict[str, Any]) -> str:
     primary subject of the cross-SDK conformance corpus — implementations
     MUST match it byte-for-byte.
 
+    A non-empty ``operationId`` is converted to snake_case
+    (``getUserById`` -> ``get_user_by_id``); otherwise the ID is built from
+    the path segments plus the method and normalised the same way
+    (``GET /user-profiles/{userId}`` -> ``user_profiles.user_id.get``).
+
     Args:
         path: The OpenAPI path template (e.g. ``"/users/{user_id}"``).
         method: The HTTP method key as written in the document (e.g. ``"get"``).
         operation: The operation object, consulted only for ``operationId``.
 
     Returns:
-        The derived module ID. Never empty — falls back to ``"root.<method>"``.
+        The derived module ID in apcore's Canonical ID alphabet
+        (``[a-z0-9_.]``). Never empty — falls back to ``"root.<method>"``.
+        It is a legal apcore ID unless a segment begins with a digit
+        (``POST /v1/2fa`` -> ``v1.2fa.post``); this function does not warn,
+        the scanner does.
     """
     operation_id = operation.get("operationId") if isinstance(operation, dict) else None
     if isinstance(operation_id, str) and operation_id != "":
-        candidate = _sanitize(operation_id)
+        candidate = _normalize_module_id(operation_id)
         if candidate:
             return candidate
 
-    raw_segments = [seg for seg in path.split("/") if seg != ""]
-    if not raw_segments:
-        return f"root.{method.lower()}"
-
     segments: list[str] = []
-    for seg in raw_segments:
+    for seg in path.split("/"):
+        if seg == "":
+            continue
         if len(seg) >= 2 and seg.startswith("{") and seg.endswith("}"):
             seg = seg[1:-1]
         segments.append(seg)
 
-    candidate = ".".join([*segments, method]).lower()
-    candidate = _sanitize(candidate)
-    if not candidate:
-        return f"root.{method.lower()}"
-    return candidate
+    # A path with no segments (`/`) goes straight to the `root.<method>`
+    # fallback rather than yielding the bare method — see worked example
+    # `GET /` -> `root.get` and conformance case `openapi_scan_017_root_path`.
+    if segments:
+        candidate = _normalize_module_id(".".join([*segments, method]))
+        if candidate:
+            return candidate
+    return f"root.{method.lower()}"
 
 
 # Private alias so `OpenAPIScanner.scan`'s `derive_module_id=` keyword
@@ -201,6 +255,12 @@ class OpenAPIScanner(BaseScanner):
         **_: Any,
     ) -> list[ScannedModule]:
         """Scan an OpenAPI document, returning one ``ScannedModule`` per operation.
+
+        Every emitted ``module_id`` is in apcore's Canonical ID alphabet: the
+        final ID — after the ``derive_module_id`` hook, ``base_path_prefix``
+        and the ``transform_module`` hook — is normalised to snake_case. One
+        that is still not a legal apcore ID (a segment beginning with a digit,
+        or an empty ID from a hook) is emitted anyway, with a warning.
 
         See ``Contract: OpenAPIScanner.scan`` in
         ``apcore-toolkit/docs/features/openapi-scanner.md``.
@@ -322,6 +382,22 @@ class OpenAPIScanner(BaseScanner):
                     if transformed is None:
                         continue
                     module = transformed
+
+                # Normalise the *final* ID — after the `derive_module_id` hook,
+                # `base_path_prefix` and `transform_module` — so the alphabet
+                # holds for every emitted ID, then flag what normalisation
+                # cannot repair. Runs before filter/dedup so `include`/`exclude`
+                # match, and `deduplicate_ids` resolves, the emitted ID.
+                # `replace()` rather than mutation: a `transform_module` hook
+                # may still hold the object it returned.
+                final_id = _normalize_module_id(module.module_id)
+                legality_warning = _legality_warning(final_id)
+                if final_id != module.module_id or legality_warning is not None:
+                    module = replace(
+                        module,
+                        module_id=final_id,
+                        warnings=[*module.warnings, legality_warning] if legality_warning else list(module.warnings),
+                    )
 
                 modules.append(module)
 

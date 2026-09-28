@@ -9,10 +9,12 @@ structured object, not a canonical string, since ``ScannedModule`` output is
 compared field-by-field rather than byte-for-byte. See
 ``apcore-toolkit/docs/features/openapi-scanner.md``.
 
-Fixture cases ``openapi_scan_021`` through ``openapi_scan_023`` install a
-named test-only hook from ``_HOOKS`` below — the fixture's ``input.hooks``
-key names which one, so all three SDKs install byte-identical hook behavior
-without serializing a callable through JSON.
+Fixture cases ``openapi_scan_021`` through ``openapi_scan_023`` and
+``openapi_scan_029`` install a named test-only hook from ``_HOOKS`` below —
+the fixture's ``input.hooks`` key names which one, so all three SDKs install
+byte-identical hook behavior without serializing a callable through JSON.
+``input.options`` (e.g. ``base_path_prefix`` in ``openapi_scan_028``) is
+passed through to ``scan`` as keyword arguments.
 """
 
 from __future__ import annotations
@@ -52,6 +54,10 @@ def _always_returns_dup_op(path: str, method: str, operation: dict[str, Any]) ->
     return "dup.op"
 
 
+def _always_returns_mixed_case_id(path: str, method: str, operation: dict[str, Any]) -> str:
+    return "Custom-Space.GetThing"
+
+
 _HOOKS: dict[str, Any] = {
     "skip_if_x_skip_true": ("transform_operation", _skip_if_x_skip_true),
     "custom_name_for_operation_id_custom_else_default": (
@@ -59,6 +65,7 @@ _HOOKS: dict[str, Any] = {
         _custom_name_for_operation_id_custom_else_default,
     ),
     "always_returns_dup_op": ("derive_module_id", _always_returns_dup_op),
+    "always_returns_mixed_case_id": ("derive_module_id", _always_returns_mixed_case_id),
 }
 
 
@@ -97,7 +104,8 @@ def test_openapi_scan_conformance(case: dict[str, Any]) -> None:
     options = dict(inp.get("options", {}))
 
     for hook_key, hook_name in (inp.get("hooks") or {}).items():
-        _, fn = _HOOKS[hook_name]
+        kind, fn = _HOOKS[hook_name]
+        assert kind == hook_key, f"hook {hook_name!r} is a {kind} hook, but the fixture installs it as {hook_key}"
         options[hook_key] = fn
 
     scanner = OpenAPIScanner()
