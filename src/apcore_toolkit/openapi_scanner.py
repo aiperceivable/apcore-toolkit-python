@@ -33,10 +33,12 @@ _RECOGNIZED_METHODS: frozenset[str] = frozenset({"get", "put", "post", "delete",
 # written out: Python's `\d`/`\w` and `re.IGNORECASE` are Unicode-aware (under
 # IGNORECASE, `[a-z]` matches U+212A KELVIN SIGN), and the TypeScript and Rust
 # ports must produce byte-identical output from the same algorithm.
-_ACRONYM_BOUNDARY_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
+# `([A-Z])`, not `([A-Z]+)`: the output is identical, but the `+` form makes
+# `re` rescan a long run of capitals from every start position — quadratic
+# time on a crafted operationId (40,000 capitals took ~10 s).
+_ACRONYM_BOUNDARY_RE = re.compile(r"([A-Z])([A-Z][a-z])")
 _WORD_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
 _OUTSIDE_ID_ALPHABET_RE = re.compile(r"[^A-Za-z0-9_.]")
-_UNDERSCORE_RUN_RE = re.compile(r"_+")
 # Matched with `fullmatch`, not `^...$`: Python's `$` also matches just before
 # a trailing "\n", which would accept a segment the spec's regex rejects.
 _LEGAL_SEGMENT_RE = re.compile(r"[a-z][a-z0-9_]*")
@@ -48,36 +50,43 @@ def _normalize_module_id(candidate: str) -> str:
     Implements ``normalize_module_id`` from ``apcore-toolkit/docs/features/
     openapi-scanner.md`` § ``module_id`` Derivation, byte-for-byte:
 
-    1. insert ``_`` at word boundaries — ``([A-Z]+)([A-Z][a-z])`` first
-       (acronym followed by a word), then ``([a-z0-9])([A-Z])``;
-    2. replace every character outside ``[A-Za-z0-9_.]`` with ``_``;
+    1. insert ``_`` at word boundaries — ``([A-Z])([A-Z][a-z])`` (acronym
+       followed by a word) and ``([a-z0-9])([A-Z])``; the two replace-alls
+       commute, so their order is immaterial;
+    2. replace every code point outside ``[A-Za-z0-9_.]`` with one ``_``;
     3. lowercase — only ASCII remains, so this cannot reintroduce a
        non-ASCII letter (U+212A KELVIN SIGN would lowercase to ``k`` had it
        survived step 2);
-    4. split on ``.``; per segment collapse ``_`` runs and strip leading and
-       trailing ``_``; drop empty segments;
-    5. join with ``.``.
+    4. split on ``.``; strip leading ``_`` from each segment; drop empty
+       segments; join the rest with ``.``.
 
-    Idempotent on its own output. The result can still be an illegal apcore
-    ID — a segment beginning with a digit, or empty — because repairing
-    either would invent a name; the scanner reports that with a warning.
+    Invariant (MUST): a legal apcore ID is returned unchanged — every step
+    is the identity on ``^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$``. That is
+    why runs of ``_`` are kept (FastAPI's ``read_item_items__item_id__get``
+    registers today) and a trailing ``_`` is not stripped here (a hook's
+    legal ``abc_`` must survive the scanner's final pass); only
+    :func:`derive_module_id`'s ``operationId`` branch strips it. Also
+    idempotent and segment-local. The result can still be illegal — a
+    segment beginning with a digit, or empty — because repairing either
+    would invent a name; the scanner reports that with a warning.
     Private: the scanner owns the alphabet, and hooks choose only the words.
     """
     candidate = _ACRONYM_BOUNDARY_RE.sub(r"\1_\2", candidate)
     candidate = _WORD_BOUNDARY_RE.sub(r"\1_\2", candidate)
     candidate = _OUTSIDE_ID_ALPHABET_RE.sub("_", candidate)
     candidate = candidate.lower()
-    segments = (_UNDERSCORE_RUN_RE.sub("_", seg).strip("_") for seg in candidate.split("."))
+    segments = (seg.lstrip("_") for seg in candidate.split("."))
     return ".".join(seg for seg in segments if seg)
 
 
 def _legality_warning(module_id: str) -> str | None:
     """Return the pinned warning if *module_id* is not a legal apcore ID.
 
-    Checks only the alphabet (PROTOCOL_SPEC §2.7): the first dot-separated
-    segment failing ``^[a-z][a-z0-9_]*$`` is named — for an empty ID, the
-    empty string. Length and reserved first segments are the registry's to
-    enforce.
+    Checks only the alphabet the registries enforce (PROTOCOL_SPEC §2.7's
+    pattern): the first dot-separated segment that is not a full match of
+    ``^[a-z][a-z0-9_]*$`` is named — for an empty ID, the empty string.
+    §2.7's no-``__`` clause, the length limit and reserved first segments
+    are the registry's to enforce, not the scanner's.
     """
     for segment in module_id.split("."):
         if _LEGAL_SEGMENT_RE.fullmatch(segment) is None:
@@ -98,9 +107,14 @@ def derive_module_id(path: str, method: str, operation: dict[str, Any]) -> str:
     MUST match it byte-for-byte.
 
     A non-empty ``operationId`` is converted to snake_case
-    (``getUserById`` -> ``get_user_by_id``); otherwise the ID is built from
-    the path segments plus the method and normalised the same way
-    (``GET /user-profiles/{userId}`` -> ``user_profiles.user_id.get``).
+    (``getUserById`` -> ``get_user_by_id``) and a trailing ``_`` stripped
+    (``getUser_`` -> ``get_user``, as V1 did); apart from that trailing
+    ``_``, one that is already a legal ID (FastAPI's
+    ``read_item_items__item_id__get``) is used unchanged.
+    Otherwise each path segment is normalised the same way and the
+    lowercased method appended (``GET /user-profiles/{userId}`` ->
+    ``user_profiles.user_id.get``); a path with no surviving segment
+    (``/``, ``/-``, ``/{}``) yields ``root.<method>``.
 
     Args:
         path: The OpenAPI path template (e.g. ``"/users/{user_id}"``).
@@ -116,25 +130,22 @@ def derive_module_id(path: str, method: str, operation: dict[str, Any]) -> str:
     """
     operation_id = operation.get("operationId") if isinstance(operation, dict) else None
     if isinstance(operation_id, str) and operation_id != "":
-        candidate = _normalize_module_id(operation_id)
+        # The trailing-"_" strip belongs to this branch only: the scanner's
+        # final normalisation must not rewrite a legal ID a hook returned.
+        candidate = _normalize_module_id(operation_id).rstrip("_")
         if candidate:
             return candidate
 
-    segments: list[str] = []
+    parts: list[str] = []
     for seg in path.split("/"):
-        if seg == "":
-            continue
         if len(seg) >= 2 and seg.startswith("{") and seg.endswith("}"):
             seg = seg[1:-1]
-        segments.append(seg)
+        part = _normalize_module_id(seg)
+        if part:
+            parts.append(part)
 
-    # A path with no segments (`/`) goes straight to the `root.<method>`
-    # fallback rather than yielding the bare method — see worked example
-    # `GET /` -> `root.get` and conformance case `openapi_scan_017_root_path`.
-    if segments:
-        candidate = _normalize_module_id(".".join([*segments, method]))
-        if candidate:
-            return candidate
+    if parts:
+        return ".".join([*parts, method.lower()])
     return f"root.{method.lower()}"
 
 
@@ -258,9 +269,11 @@ class OpenAPIScanner(BaseScanner):
 
         Every emitted ``module_id`` is in apcore's Canonical ID alphabet: the
         final ID — after the ``derive_module_id`` hook, ``base_path_prefix``
-        and the ``transform_module`` hook — is normalised to snake_case. One
-        that is still not a legal apcore ID (a segment beginning with a digit,
-        or an empty ID from a hook) is emitted anyway, with a warning.
+        and the ``transform_module`` hook — is normalised to snake_case, and
+        an ID that is already legal is left unchanged. One that is still not
+        a legal apcore ID (a segment beginning with a digit, or an empty ID
+        from a hook) is emitted anyway; after deduplication it carries a
+        warning naming the ID actually emitted.
 
         See ``Contract: OpenAPIScanner.scan`` in
         ``apcore-toolkit/docs/features/openapi-scanner.md``.
@@ -385,25 +398,30 @@ class OpenAPIScanner(BaseScanner):
 
                 # Normalise the *final* ID — after the `derive_module_id` hook,
                 # `base_path_prefix` and `transform_module` — so the alphabet
-                # holds for every emitted ID, then flag what normalisation
-                # cannot repair. Runs before filter/dedup so `include`/`exclude`
-                # match, and `deduplicate_ids` resolves, the emitted ID.
-                # `replace()` rather than mutation: a `transform_module` hook
-                # may still hold the object it returned.
+                # holds for every emitted ID. Runs before filter/dedup so
+                # `include`/`exclude` match, and `deduplicate_ids` resolves, the
+                # emitted ID. A legal ID passes through unchanged. `replace()`
+                # rather than mutation: a `transform_module` hook may still hold
+                # the object it returned.
                 final_id = _normalize_module_id(module.module_id)
-                legality_warning = _legality_warning(final_id)
-                if final_id != module.module_id or legality_warning is not None:
-                    module = replace(
-                        module,
-                        module_id=final_id,
-                        warnings=[*module.warnings, legality_warning] if legality_warning else list(module.warnings),
-                    )
+                if final_id != module.module_id:
+                    module = replace(module, module_id=final_id)
 
                 modules.append(module)
 
         modules = self.filter_modules(modules, include=include, exclude=exclude)
         modules = self.deduplicate_ids(modules)
-        return modules
+        # The legality check runs last, so its warning names the ID actually
+        # emitted (`3ds_2`, not `3ds`) and follows any deduplication warning.
+        return [self._with_legality_warning(module) for module in modules]
+
+    @staticmethod
+    def _with_legality_warning(module: ScannedModule) -> ScannedModule:
+        """Append the pinned legality warning if *module*'s ID is still illegal."""
+        warning = _legality_warning(module.module_id)
+        if warning is None:
+            return module
+        return replace(module, warnings=[*module.warnings, warning])
 
     def get_source_name(self) -> str:
         return "openapi"

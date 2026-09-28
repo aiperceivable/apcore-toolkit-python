@@ -2,15 +2,19 @@
 
 ``apcore-toolkit/docs/features/openapi-scanner.md`` § ``module_id`` Derivation
 requires every emitted ``module_id`` to be in apcore's Canonical ID alphabet
-(PROTOCOL_SPEC §2.7). The conformance corpus (``openapi_scan.json`` cases 003,
-015, 025-029) pins the cross-SDK outputs; these tests pin the edges the corpus
-does not reach — non-ASCII input, idempotence, the empty ID, the legality
-check's own regex semantics, and the scanner's hook interplay.
+(PROTOCOL_SPEC §2.7), and requires normalisation to return an ID that is
+already legal unchanged. The conformance corpus (``openapi_scan.json`` cases
+003, 015, 025-031) pins the cross-SDK outputs; these tests pin the edges the
+corpus does not reach — non-ASCII input, the legal-ID invariant, idempotence,
+the empty ID, the legality check's own regex semantics, and the scanner's hook
+interplay.
 """
 
 from __future__ import annotations
 
+import itertools
 import re
+import time
 from typing import Any
 
 import pytest
@@ -50,7 +54,7 @@ def _expected_warning(module_id: str, segment: str) -> str:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        # Acronym boundary `([A-Z]+)([A-Z][a-z])` runs before the word boundary.
+        # Acronym boundary `([A-Z])([A-Z][a-z])` and word boundary `([a-z0-9])([A-Z])`.
         ("getHTTPResponse", "get_http_response"),
         ("HTTPServer", "http_server"),
         ("XMLHttpRequest", "xml_http_request"),
@@ -84,20 +88,24 @@ def test_normalize_digits(raw: str, expected: str) -> None:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        # FastAPI-style generated operationIds carry `__` runs.
-        ("get_product_product__product_id__get", "get_product_product_product_id_get"),
-        ("a__b", "a_b"),
-        ("__private__", "private"),
+        # Runs of `_` are KEPT: FastAPI's generated IDs are legal and register today.
+        ("get_product_product__product_id__get", "get_product_product__product_id__get"),
+        ("a__b", "a__b"),
+        # One `_` per replaced code point, and no collapse afterwards.
         ("list-pets", "list_pets"),
-        ("a  b", "a_b"),
+        ("a  b", "a__b"),
+        ("a-_b", "a__b"),
+        # Only LEADING `_` is stripped per segment; a trailing `_` is legal and kept.
+        ("__private__", "private__"),
+        ("abc_", "abc_"),
+        ("list-", "list_"),
         ("get_User", "get_user"),
-        # Dots delimit segments; `_` runs are collapsed and stripped per segment,
-        # and empty segments are dropped.
+        # Dots delimit segments; empty segments are dropped.
         ("Users.GetUser", "users.get_user"),
         ("Custom-Space.GetThing", "custom_space.get_thing"),
         ("x..y", "x.y"),
         (".a.", "a"),
-        ("a._b_.c", "a.b.c"),
+        ("a._b_.c", "a.b_.c"),
         ("already_snake.case", "already_snake.case"),
     ],
 )
@@ -115,15 +123,16 @@ def test_normalize_separators_and_underscore_runs(raw: str, expected: str) -> No
         # U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE lowercases to two code
         # points ("i" + U+0307) — same reason for the step order.
         ("\u0130d", "d"),
-        ("caf\u00e9", "caf"),
+        ("caf\u00e9", "caf_"),  # a trailing `_` is kept by normalisation
         # Fullwidth letters and digits are not `[A-Za-z0-9]`.
         ("\uff21\uff22\uff23", ""),
         ("\uff11\uff12", ""),
-        # An astral character is one Python character; JavaScript without the
-        # `u` flag sees two code units. Step 4's collapse makes both agree.
+        # An astral character is ONE code point and becomes ONE `_` (JavaScript
+        # needs the `u` flag, where it is two code units; conformance case 025).
         ("\U0001f600emoji", "emoji"),
         ("a\U0001f600b", "a_b"),
-        ("abc\n", "abc"),
+        ("a\U0001f600\U0001f600b", "a__b"),
+        ("abc\n", "abc_"),
     ],
 )
 def test_normalize_non_ascii_never_survives(raw: str, expected: str) -> None:
@@ -150,6 +159,7 @@ _IDEMPOTENCE_PROBES = [
     "\U0001f600emoji",
     "a._b_.c",
     "users.user_id.get",
+    "a  b__",
     "",
 ]
 
@@ -161,8 +171,46 @@ def test_normalize_is_idempotent_and_in_alphabet(raw: str) -> None:
     assert re.fullmatch(r"[a-z0-9_.]*", once)
     for segment in once.split(".") if once else []:
         assert segment, "empty segments are dropped"
-        assert not segment.startswith("_") and not segment.endswith("_")
-        assert "__" not in segment
+        assert not segment.startswith("_"), "leading `_` is stripped"
+
+
+@pytest.mark.parametrize(
+    "legal_id",
+    [
+        "read_item_items__item_id__get",  # FastAPI
+        "get_product_product__product_id__get",
+        "abc_",
+        "a__b.c_",
+        "users.user_id.get",
+        "x9.y_z",
+    ],
+)
+def test_normalize_returns_a_legal_id_unchanged(legal_id: str) -> None:
+    """The spec's MUST: a name apcore already accepts is never rewritten."""
+    assert MODULE_ID_PATTERN.fullmatch(legal_id)
+    assert _normalize_module_id(legal_id) == legal_id
+
+
+def test_normalize_returns_every_short_legal_id_unchanged() -> None:
+    """Exhaustive over the character classes a legal ID can contain (letter,
+    digit, `_`, `.`), up to length 6 — 516 legal IDs."""
+    checked = 0
+    for length in range(1, 7):
+        for chars in itertools.product("a0_.", repeat=length):
+            candidate = "".join(chars)
+            if MODULE_ID_PATTERN.fullmatch(candidate):
+                checked += 1
+                assert _normalize_module_id(candidate) == candidate
+    assert checked == 516
+
+
+def test_normalize_is_segment_local() -> None:
+    """normalize(a.b) == normalize(a) + "." + normalize(b) — why the path branch
+    may normalise one segment at a time."""
+    pieces = ["getUser", "-x-", "", "__y", "Kz", "a  b", "2fa", "HTTPServer"]
+    for left, right in itertools.product(pieces, repeat=2):
+        joined = ".".join(part for part in (_normalize_module_id(left), _normalize_module_id(right)) if part)
+        assert _normalize_module_id(f"{left}.{right}") == joined
 
 
 def test_normalize_is_not_public_api() -> None:
@@ -185,10 +233,17 @@ def test_normalize_is_not_public_api() -> None:
         ("/user-profiles/{userId}", "get", {}, "user_profiles.user_id.get"),
         ("/v1/_debug/", "get", {}, "v1.debug.get"),
         ("/a b/c", "post", {}, "a_b.c.post"),
-        # The method is normalised with the path, so a caller passing "GET" gets the same ID.
+        # The method is lowercased, so a caller passing "GET" gets the same ID.
         ("/users", "GET", {}, "users.get"),
+        # Path segments are normalised one by one; empty results are dropped, and
+        # with none left the ID falls back to root.<method> (conformance case 031).
         ("/", "get", {}, "root.get"),
         ("", "delete", {}, "root.delete"),
+        ("/-", "get", {}, "root.get"),
+        ("/{}", "post", {}, "root.post"),
+        ("/_/{_}/", "GET", {}, "root.get"),
+        ("/v1/-/items", "get", {}, "v1.items.get"),
+        ("/items_/{item_id}", "get", {}, "items_.item_id.get"),  # trailing `_` kept on the path branch
         # A digit-leading segment is returned as-is; the scanner (not this function) warns.
         ("/v1/2fa", "post", {}, "v1.2fa.post"),
         # An operationId that normalises to nothing falls through to the path branch.
@@ -196,6 +251,12 @@ def test_normalize_is_not_public_api() -> None:
         ("/widgets", "get", {"operationId": "\U0001f600"}, "widgets.get"),
         # ...and from there to the root fallback.
         ("/", "put", {"operationId": "___"}, "root.put"),
+        # A legal operationId is used unchanged, `__` runs included (FastAPI).
+        ("/items/{item_id}", "get", {"operationId": "read_item_items__item_id__get"}, "read_item_items__item_id__get"),
+        # The operationId branch, and only it, strips a trailing `_` (as V1 did).
+        ("/h", "get", {"operationId": "getUser_"}, "get_user"),
+        ("/h", "get", {"operationId": "list-"}, "list"),
+        ("/h", "get", {"operationId": "a.b__"}, "a.b"),
     ],
 )
 def test_derive_module_id(path: str, method: str, operation: dict[str, Any], expected: str) -> None:
@@ -339,6 +400,54 @@ def test_transform_module_producing_illegal_id_warns() -> None:
     assert modules[0].warnings == [_expected_warning("9lives.cat", "9lives")]
 
 
+def test_legality_warning_follows_dedup_and_names_the_emitted_id() -> None:
+    """The legality check runs after deduplicate_ids (conformance case 030)."""
+    modules = _scan({"/a": {"get": {"operationId": "3ds", **_OK}}, "/b": {"get": {"operationId": "3ds", **_OK}}})
+    assert [m.module_id for m in modules] == ["3ds", "3ds_2"]
+    assert modules[0].warnings == [_expected_warning("3ds", "3ds")]
+    assert modules[1].warnings == [
+        "Module ID renamed from '3ds' to '3ds_2' to avoid collision",
+        _expected_warning("3ds_2", "3ds_2"),
+    ]
+
+
+def test_filtered_out_module_is_not_checked() -> None:
+    modules = _scan({"/v1/2fa": {"post": _OK}, "/users": {"get": _OK}}, exclude=r"^v1\.")
+    assert [(m.module_id, m.warnings) for m in modules] == [("users.get", [])]
+
+
+@pytest.mark.parametrize("hook_id", ["abc_", "read_item_items__item_id__get", "a__b.c_"])
+def test_legal_hook_output_is_not_rewritten(hook_id: str) -> None:
+    """The final normalisation strips no trailing `_` and collapses no `__`:
+    a legal ID a hook returns is emitted as returned."""
+    modules = _scan({"/users": {"get": _OK}}, derive_module_id=lambda p, m, o: hook_id)
+    assert modules[0].module_id == hook_id
+    assert modules[0].warnings == []
+
+
+def test_transform_module_legal_output_is_not_rewritten() -> None:
+    def rename(module: ScannedModule) -> ScannedModule:
+        module.module_id = "custom__name_"
+        return module
+
+    modules = _scan({"/users": {"get": _OK}}, transform_module=rename)
+    assert modules[0].module_id == "custom__name_"
+    assert modules[0].warnings == []
+
+
+def test_fastapi_document_ids_are_unchanged() -> None:
+    """FastAPI-generated operationIds are legal apcore IDs and register as-is."""
+    modules = _scan(
+        {
+            "/items/{item_id}": {"get": {"operationId": "read_item_items__item_id__get", **_OK}},
+            "/items/": {"post": {"operationId": "create_item_items__post", **_OK}},
+        }
+    )
+    assert [m.module_id for m in modules] == ["read_item_items__item_id__get", "create_item_items__post"]
+    assert all(MODULE_ID_PATTERN.fullmatch(m.module_id) for m in modules)
+    assert all(m.warnings == [] for m in modules)
+
+
 def test_normalisation_collision_is_deduplicated() -> None:
     """`listPets` and `list-pets` are distinct in the document but normalise to
     the same ID; normalisation runs before deduplicate_ids, which resolves it."""
@@ -354,3 +463,16 @@ def test_include_filter_matches_the_normalised_id() -> None:
     paths = {"/pets": {"get": {"operationId": "listPets", **_OK}}, "/users": {"get": _OK}}
     assert [m.module_id for m in _scan(paths, include=r"^list_pets$")] == ["list_pets"]
     assert _scan(paths, include=r"^listPets$") == []
+
+
+def test_long_capital_run_is_linear_time() -> None:
+    # The scanner reads documents it did not write. The `([A-Z]+)` form of the
+    # acronym rule rescans a run of capitals from every start position
+    # (40,000 capitals took ~10 s); the pinned `([A-Z])` form is linear and
+    # inserts the `_` in the same place.
+    crafted = "A" * 200_000 + "b"
+    start = time.perf_counter()
+    result = _normalize_module_id(crafted)
+    elapsed = time.perf_counter() - start
+    assert result == "a" * 199_999 + "_ab"
+    assert elapsed < 2.0, f"normalisation took {elapsed:.2f}s on a 200,001-character input"

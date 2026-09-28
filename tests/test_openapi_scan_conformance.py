@@ -9,8 +9,9 @@ structured object, not a canonical string, since ``ScannedModule`` output is
 compared field-by-field rather than byte-for-byte. See
 ``apcore-toolkit/docs/features/openapi-scanner.md``.
 
-Fixture cases ``openapi_scan_021`` through ``openapi_scan_023`` and
-``openapi_scan_029`` install a named test-only hook from ``_HOOKS`` below —
+Fixture cases ``openapi_scan_021`` through ``openapi_scan_023``,
+``openapi_scan_029`` and ``openapi_scan_032`` install a named test-only hook
+from ``_HOOKS`` below —
 the fixture's ``input.hooks`` key names which one, so all three SDKs install
 byte-identical hook behavior without serializing a callable through JSON.
 ``input.options`` (e.g. ``base_path_prefix`` in ``openapi_scan_028``) is
@@ -58,6 +59,10 @@ def _always_returns_mixed_case_id(path: str, method: str, operation: dict[str, A
     return "Custom-Space.GetThing"
 
 
+def _always_returns_legal_trailing_underscore_id(path: str, method: str, operation: dict[str, Any]) -> str:
+    return "abc_"
+
+
 _HOOKS: dict[str, Any] = {
     "skip_if_x_skip_true": ("transform_operation", _skip_if_x_skip_true),
     "custom_name_for_operation_id_custom_else_default": (
@@ -66,6 +71,7 @@ _HOOKS: dict[str, Any] = {
     ),
     "always_returns_dup_op": ("derive_module_id", _always_returns_dup_op),
     "always_returns_mixed_case_id": ("derive_module_id", _always_returns_mixed_case_id),
+    "always_returns_legal_trailing_underscore_id": ("derive_module_id", _always_returns_legal_trailing_underscore_id),
 }
 
 
