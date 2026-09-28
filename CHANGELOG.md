@@ -2,7 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.13.0] - 2026-09-28
+
+A breaking release: `OpenAPIScanner` module IDs are normalised into apcore's Canonical ID alphabet (read the Migration note before upgrading — IDs derived from camelCase names change). The apcore floor is unchanged.
 
 ### Changed — BREAKING
 

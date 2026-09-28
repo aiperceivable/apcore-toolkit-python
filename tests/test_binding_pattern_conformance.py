@@ -7,7 +7,7 @@ matcher and directory-selection code and must produce identical answers. This
 is the cross-SDK behavioural contract for the ``pattern`` argument (see
 ``apcore-toolkit/docs/features/binding-loader.md#pattern-matching``).
 
-Two case kinds. There is no ``validate`` kind: as of 0.13.0 every string is a
+Two case kinds. There is no ``validate`` kind: as of 0.12.0 every string is a
 valid pattern and the loader never raises on one for syntactic reasons,
 matching apcore's Algorithm A25 requirement 2.
 

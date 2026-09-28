@@ -610,7 +610,7 @@ class TestMatchName:
 class TestPatternIsNeverRejected:
     """Every string is a valid pattern; the loader never raises on one for
     syntactic reasons (apcore Algorithm A25 requirement 2, PROTOCOL_SPEC
-    §5.12.6 clause 6). These cases were the inverse until 0.13.0."""
+    §5.12.6 clause 6). These cases were the inverse in a pre-release draft of 0.12.0."""
 
     @pytest.mark.parametrize(
         "pattern",
