@@ -26,6 +26,30 @@ logger = logging.getLogger("apcore_toolkit")
 _SUPPORTED_SPEC_VERSIONS = frozenset({"1.0"})
 _STRICT_REQUIRED = ("module_id", "target", "input_schema", "output_schema")
 _LOOSE_REQUIRED = ("module_id", "target")
+_DOCUMENT_KEYS = frozenset({"spec_version", "bindings"})
+# Keep this list deliberately local to the pure-data loader. These are the
+# fields YAMLWriter persists, plus ``warnings``, which is a documented
+# ScannedModule field preserved by this loader for inspection workflows.
+# Runtime-only binding fields (for example ``auto_schema`` and ``schema_ref``)
+# belong to apcore's target-loading BindingLoader and must not be accepted here.
+_BINDING_ENTRY_KEYS = frozenset(
+    {
+        "module_id",
+        "target",
+        "description",
+        "documentation",
+        "tags",
+        "version",
+        "annotations",
+        "examples",
+        "metadata",
+        "input_schema",
+        "output_schema",
+        "suggested_alias",
+        "display",
+        "warnings",
+    }
+)
 _MAX_BINDING_FILE_SIZE = 16 * 1024 * 1024  # 16 MiB
 _MAX_BINDING_FILES_PER_DIR = 10_000
 
@@ -334,6 +358,13 @@ class BindingLoader:
                 file_path=file_path,
             )
 
+        unknown_document_keys = data.keys() - _DOCUMENT_KEYS
+        if unknown_document_keys:
+            raise BindingLoadError(
+                f"unknown top-level binding document keys: {self._format_keys(unknown_document_keys)}",
+                file_path=file_path,
+            )
+
         self._check_spec_version(data.get("spec_version"), file_path=file_path)
 
         bindings = data.get("bindings")
@@ -361,7 +392,7 @@ class BindingLoader:
                 file_path or "<inline>",
             )
             return
-        if spec_version not in _SUPPORTED_SPEC_VERSIONS:
+        if not isinstance(spec_version, str) or spec_version not in _SUPPORTED_SPEC_VERSIONS:
             logger.warning(
                 "BindingLoader: %s has spec_version=%r newer than supported %s; proceeding best-effort.",
                 file_path or "<inline>",
@@ -376,6 +407,23 @@ class BindingLoader:
         file_path: str | None,
         strict: bool,
     ) -> ScannedModule:
+        unknown_entry_keys = entry.keys() - _BINDING_ENTRY_KEYS
+        if unknown_entry_keys:
+            raise BindingLoadError(
+                f"unknown binding entry keys: {self._format_keys(unknown_entry_keys)}",
+                file_path=file_path,
+                module_id=entry.get("module_id") if isinstance(entry.get("module_id"), str) else None,
+            )
+
+        has_input_schema = "input_schema" in entry
+        has_output_schema = "output_schema" in entry
+        if has_input_schema != has_output_schema:
+            raise BindingLoadError(
+                "'input_schema' and 'output_schema' must be supplied together",
+                file_path=file_path,
+                module_id=entry.get("module_id") if isinstance(entry.get("module_id"), str) else None,
+            )
+
         required = _STRICT_REQUIRED if strict else _LOOSE_REQUIRED
         # A required field is "missing or invalid" when absent, null, or of
         # the wrong type. Previously only absent/None was rejected, so
@@ -460,6 +508,11 @@ class BindingLoader:
             display=self._parse_display(entry.get("display"), module_id=entry["module_id"]),
             warnings=list(entry.get("warnings") or []),
         )
+
+    @staticmethod
+    def _format_keys(keys: set[Any]) -> str:
+        """Render arbitrary YAML mapping keys deterministically for errors."""
+        return ", ".join(sorted(repr(key) for key in keys))
 
     @staticmethod
     def _required_field_invalid(field: str, entry: dict[str, Any]) -> bool:

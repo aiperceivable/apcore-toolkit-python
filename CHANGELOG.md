@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-10-09
+
+Toolkit update for apcore 0.32.0. Public loader signatures and error types
+are unchanged, but binding-file validation is stricter.
+
+### Changed
+
+- Required `apcore` dependency floor raised to `0.32.0`.
+
+### Breaking
+
+- Binding documents reject unknown top-level or entry keys and one-sided
+  inline schema pairs in both loose and strict modes, aligned with apcore
+  0.32.0. Runtime-only `auto_schema` and `schema_ref` remain unsupported by
+  this pure-data loader. Public method signatures and error types are unchanged.
+  **Migration:** remove unsupported keys, move application-specific entry
+  data into `metadata`, and provide both `input_schema` and `output_schema`
+  (or neither in loose mode). Use apcore's runtime loader for runtime schema sources.
+
+### Fixed
+
+- Non-string `spec_version` values warn and continue instead of raising an
+  unhashable-value `TypeError` for lists or mappings.
+
+### Added
+
+- Shared binding-structure conformance tests: 18 cases in both strict and
+  loose modes through in-memory parsing and YAML file loading.
+- CI checks out canonical fixtures from `apcore-toolkit`'s `main` and fails
+  with publication-order guidance if the binding-structure corpus is missing.
+  Publish the corpus before merging the SDK changes.
+
 ## [0.13.0] - 2026-09-28
 
 A breaking release: `OpenAPIScanner` module IDs are normalised into apcore's Canonical ID alphabet (read the Migration note before upgrading — IDs derived from camelCase names change). The apcore floor is unchanged.

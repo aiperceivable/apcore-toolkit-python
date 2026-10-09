@@ -156,7 +156,12 @@ class TestLoadData:
         (``serde_json::Value.clone``); this brings Python in line.
         """
         source_schema = {"type": "object", "properties": {"id": {"type": "integer"}}}
-        entry = {"module_id": "x", "target": "p:f", "input_schema": source_schema}
+        entry = {
+            "module_id": "x",
+            "target": "p:f",
+            "input_schema": source_schema,
+            "output_schema": {},
+        }
         m = loader.load_data({"bindings": [entry]})[0]
         m.input_schema["properties"]["id"]["type"] = "string"  # type: ignore[index]
         assert source_schema["properties"]["id"]["type"] == "integer"
@@ -201,6 +206,33 @@ class TestLoadData:
     def test_bindings_not_a_list(self, loader: BindingLoader) -> None:
         with pytest.raises(BindingLoadError, match="not a list"):
             loader.load_data({"bindings": "nope"})  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("strict", [False, True])
+    def test_unknown_top_level_key_rejected_in_both_modes(self, loader: BindingLoader, strict: bool) -> None:
+        with pytest.raises(BindingLoadError, match="unknown top-level.*unexpected"):
+            loader.load_data(
+                {"bindings": [{"module_id": "x", "target": "p:f"}], "unexpected": True},
+                strict=strict,
+            )
+
+    @pytest.mark.parametrize("strict", [False, True])
+    def test_unknown_binding_entry_key_rejected_in_both_modes(self, loader: BindingLoader, strict: bool) -> None:
+        with pytest.raises(BindingLoadError, match="unknown binding entry.*unexpected"):
+            loader.load_data(
+                {"bindings": [{"module_id": "x", "target": "p:f", "unexpected": True}]},
+                strict=strict,
+            )
+
+    @pytest.mark.parametrize("schema_key", ["input_schema", "output_schema"])
+    @pytest.mark.parametrize("strict", [False, True])
+    def test_one_sided_schema_pair_rejected_in_both_modes(
+        self, loader: BindingLoader, strict: bool, schema_key: str
+    ) -> None:
+        with pytest.raises(BindingLoadError, match="input_schema.*output_schema.*together"):
+            loader.load_data(
+                {"bindings": [{"module_id": "x", "target": "p:f", schema_key: {}}]},
+                strict=strict,
+            )
 
     def test_entry_not_a_mapping(self, loader: BindingLoader) -> None:
         with pytest.raises(BindingLoadError, match="mapping"):
@@ -442,12 +474,12 @@ class TestMalformedFieldTypes:
     ``test_loose_mode_warns_and_coerces_wrong_type_optional_fields``."""
 
     def test_input_schema_string_raises_binding_load_error(self, loader: BindingLoader) -> None:
-        data = {"bindings": [{"module_id": "x", "target": "m:f", "input_schema": "not-a-dict"}]}
+        data = {"bindings": [{"module_id": "x", "target": "m:f", "input_schema": "not-a-dict", "output_schema": {}}]}
         with pytest.raises(BindingLoadError, match="input_schema"):
             loader.load_data(data, strict=True)
 
     def test_output_schema_int_raises_binding_load_error(self, loader: BindingLoader) -> None:
-        data = {"bindings": [{"module_id": "x", "target": "m:f", "output_schema": 42}]}
+        data = {"bindings": [{"module_id": "x", "target": "m:f", "input_schema": {}, "output_schema": 42}]}
         with pytest.raises(BindingLoadError, match="output_schema"):
             loader.load_data(data, strict=True)
 
@@ -468,7 +500,7 @@ class TestMalformedFieldTypes:
             loader.load_data(data, strict=True)
 
     def test_error_carries_module_id(self, loader: BindingLoader) -> None:
-        data = {"bindings": [{"module_id": "my.module", "target": "m:f", "input_schema": "oops"}]}
+        data = {"bindings": [{"module_id": "my.module", "target": "m:f", "input_schema": "oops", "output_schema": {}}]}
         with pytest.raises(BindingLoadError) as exc_info:
             loader.load_data(data, strict=True)
         assert exc_info.value.module_id == "my.module"
