@@ -24,6 +24,7 @@ Framework-specific ``ScannedModule`` subclasses with top-level
 ``http_method`` / ``url_path`` attributes are also supported.
 """
 
+import asyncio
 import logging
 import math
 import re
@@ -178,6 +179,10 @@ class HTTPProxyRegistryWriter:
             async def execute(self, inputs: dict[str, Any], ctx: Any = None) -> dict[str, Any]:
                 import httpx as _httpx
 
+                token = getattr(ctx, "cancel_token", None)
+                if token is not None:
+                    token.check()
+
                 if ProxyModule._client is None:
                     ProxyModule._client = _httpx.AsyncClient(base_url=base_url, timeout=timeout)
 
@@ -227,7 +232,40 @@ class HTTPProxyRegistryWriter:
                         kwargs["params"] = non_path
 
                 try:
-                    resp = await ProxyModule._client.request(http_method, actual_path, headers=headers, **kwargs)
+                    # HTTPX's read timeout resets for every chunk. Keep a total
+                    # deadline around the buffered request, including its body.
+                    async with asyncio.timeout(timeout):
+                        if token is None:
+                            resp = await ProxyModule._client.request(
+                                http_method, actual_path, headers=headers, **kwargs
+                            )
+                        else:
+                            token.check()
+                            request_task = asyncio.create_task(
+                                ProxyModule._client.request(http_method, actual_path, headers=headers, **kwargs)
+                            )
+                            try:
+                                # CancelToken is a synchronous cooperative flag;
+                                # polling also observes cancellation of a parent.
+                                while not request_task.done():
+                                    token.check()
+                                    await asyncio.wait({request_task}, timeout=0.01)
+                                token.check()
+                                resp = await request_task
+                            finally:
+                                if not request_task.done():
+                                    request_task.cancel()
+                                # Join HTTP cleanup before returning to the caller.
+                                # Task cancellation remains CancelledError.
+                                await asyncio.gather(request_task, return_exceptions=True)
+                except TimeoutError as exc:
+                    if token is not None:
+                        token.check()
+                    raise ModuleError(
+                        code=ErrorCodes.MODULE_EXECUTE_ERROR,
+                        message=f"HTTP request timed out after {timeout:g}s",
+                        details={},
+                    ) from exc
                 except _httpx.HTTPError as exc:
                     raise ModuleError(
                         code=ErrorCodes.MODULE_EXECUTE_ERROR,

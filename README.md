@@ -363,6 +363,32 @@ RFC are handled with configuration rather than a fork -- `error_aliases`,
 `request_encoding`, and four extension hooks (`transform_request`,
 `parse_response`, `classify_error`, `http_client`).
 
+HTTP proxy requests observe `Context.cancel_token` and enforce `timeout` across
+connection setup and the complete response body. URL-based `load_spec()` and the
+default authentication transport also enforce a total HTTP timeout, including
+slow responses that keep sending small chunks. Their public APIs remain
+synchronous; internally, cancellable async HTTP runs to completion and cleans up
+before returning, including when called from an existing event loop. Ctrl-C
+cancels the actual HTTP task and waits for client/worker cleanup; instrumentation
+context variables are preserved across the synchronous bridge.
+
+OS DNS resolution cannot be safely interrupted. The synchronous APIs use a
+process-wide resolver capped at two active lookups and two queued jobs. Queue
+waiting and DNS count towards the HTTP deadline; cancelled queued lookups never
+start, and completed late DNS results cannot resume the cancelled HTTP request.
+HTTP worker threads are joined before returning. The bounded DNS workers belong
+to the process lifetime and do not delay request timeout or process exit while
+an OS lookup is stuck. Forked processes initialize their own resolver.
+
+Authentication's optional `http_timeout` remains a per-request setting (`None`
+disables that limit). Token polling additionally caps each request and sleep by
+the flow's remaining deadline. Custom `Transport` implementations receive this
+budget as `PreparedRequest.timeout_seconds` and must enforce it themselves.
+An injected synchronous `http_client` keeps its timeout policy and ownership;
+its stage timeouts are capped by the flow budget, and late responses are rejected.
+Arbitrary injected synchronous I/O cannot be forcibly interrupted by the toolkit,
+so custom transports/clients must bound their own blocking operations.
+
 Credentials live at `$XDG_CONFIG_HOME/apcore/credentials.json`
 (`~/.config/apcore/credentials.json` on macOS, `%APPDATA%\apcore\credentials.json`
 on Windows), created `0600` and written by atomic replace. `FileTokenStore`

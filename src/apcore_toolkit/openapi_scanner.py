@@ -462,19 +462,20 @@ def load_spec(
         headers: Extra request headers (ignored for local files).
         auth_header_factory: Optional callable returning auth headers,
             invoked once per fetch (ignored for local files).
-        timeout: Request timeout in seconds (ignored for local files).
+        timeout: Total HTTP request timeout in seconds, including the complete
+            response body (ignored for local files).
 
     Returns:
         The parsed document as a dict.
     """
     source_str = str(source)
     if source_str.startswith(("http://", "https://")):
-        import httpx
+        from apcore_toolkit._http import request
 
         request_headers = dict(headers or {})
         if auth_header_factory is not None:
             request_headers.update(auth_header_factory())
-        response = httpx.get(source_str, headers=request_headers, timeout=timeout)
+        response = request("GET", source_str, headers=request_headers, timeout=timeout)
         response.raise_for_status()
         return _parse_document(response.text, source_str)
 

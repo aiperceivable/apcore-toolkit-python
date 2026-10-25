@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.1] - 2026-10-25
+
+### Fixed
+
+- HTTP proxy execution now observes `Context.cancel_token`, interrupts in-flight
+  HTTP I/O, and joins request cleanup before reporting cancellation.
+- Proxy requests, URL-based OpenAPI loading, and the default authentication
+  transport enforce configured HTTP timeouts across the complete response body,
+  including responses that continuously send small chunks.
+- Device authorization polling clamps sleeps and outbound requests to the
+  remaining flow deadline, counts user-code callbacks against device-code
+  expiry, and rejects results that arrive after expiry.
+  `PreparedRequest.timeout_seconds` passes this budget to custom transports;
+  injected synchronous clients retain ownership and must bound their own I/O.
+  The optional `http_timeout=None` default is unchanged.
+- Ctrl-C during synchronous HTTP calls from a running event loop now cancels
+  actual HTTP work and joins cleanup, including startup and repeated-interrupt
+  windows. Context variables and previously recovered task cancellation state
+  are preserved across the bridge.
+- Slow OS DNS no longer delays configured HTTP deadlines during loop shutdown.
+  A process-wide resolver bounds running/queued lookups, discards late results,
+  and resets safely after fork; HTTP workers are still fully joined.
+
 ## [0.14.0] - 2026-10-09
 
 Toolkit update for apcore 0.32.0. Public loader signatures and error types

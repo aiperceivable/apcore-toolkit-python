@@ -17,7 +17,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from apcore_toolkit.auth.builder import build_device_request, build_token_request, decode_response
@@ -206,6 +206,7 @@ class DeviceCodeGrant(Grant):
         # stops on it, so a consumer's countdown cannot disagree with when the
         # client actually gives up — and a later edit cannot let the two drift.
         deadline = effective_deadline(device.expires_in, timeout_seconds)
+        started = self.clock()
         self._notify(
             on_user_code,
             "on_user_code",
@@ -214,7 +215,8 @@ class DeviceCodeGrant(Grant):
             verification_uri_complete=device.verification_uri_complete,
             expires_in=deadline,
         )
-        return self.poll_for_token(device, on_poll=on_poll, deadline=deadline)
+        # The device code is already expiring while the UI callback runs.
+        return self._poll_for_token(device, on_poll=on_poll, deadline=deadline, started=started)
 
     def request_device_code(self) -> DeviceCodeResponse:
         """Step 1: ``POST`` to the device authorization endpoint."""
@@ -276,51 +278,71 @@ class DeviceCodeGrant(Grant):
         that clamp is computed. Omitting it polls for the device response's own
         ``expires_in``.
         """
-        interval = device.interval if device.interval is not None else self.config.default_interval
-        if deadline is None:
-            deadline = float(device.expires_in)
+        return self._poll_for_token(
+            device,
+            on_poll=on_poll,
+            deadline=float(device.expires_in) if deadline is None else deadline,
+            started=self.clock(),
+        )
 
+    # -- internals ---------------------------------------------------------
+
+    def _poll_for_token(
+        self,
+        device: DeviceCodeResponse,
+        *,
+        on_poll: Callable[..., Any] | None,
+        deadline: float,
+        started: float,
+    ) -> TokenSet:
+        """Run against one origin, shared by expiry and callback elapsed time."""
+        interval = device.interval if device.interval is not None else self.config.default_interval
         self.final_interval = interval
         self.polls_made = 0
-        started = self.clock()
         attempt = 0
+
+        def remaining() -> float:
+            budget = deadline - (self.clock() - started)
+            if budget <= 0:
+                raise AuthorizationExpiredError(
+                    f"device authorization deadline of {deadline:g}s elapsed without a decision",
+                    reason=DEADLINE_EXCEEDED,
+                )
+            return budget
 
         while True:
             # RFC 8628 §3.5: the client must not poll faster than the
             # interval, and the user has not had time to act yet — so the wait
             # comes BEFORE the first poll, never after it.
-            self.sleep(interval)
+            self.sleep(min(interval, remaining()))
+            remaining()
             elapsed = self.clock() - started
-
-            # Stop at expires_in even when the server never says
-            # expired_token. Relying on the server's error alone leaves a
-            # client polling indefinitely against a server that never sends it.
-            if elapsed >= deadline:
-                raise AuthorizationExpiredError(
-                    f"device authorization deadline of {deadline:g}s elapsed without a decision",
-                    reason=DEADLINE_EXCEEDED,
-                )
 
             attempt += 1
             self._notify(on_poll, "on_poll", attempt=attempt, interval=interval, elapsed=elapsed)
 
+            request = build_token_request(self.config, device.device_code)
+            # Hooks may consume time too. Derive the request budget immediately
+            # before dispatch, keeping Transport.send(request) compatible.
+            request = replace(request, timeout_seconds=remaining())
             try:
-                response = self.transport.send(build_token_request(self.config, device.device_code))
+                response = self.transport.send(request)
             except TransportError as exc:
                 # Retryable, not terminal: a dropped connection mid-flow is
                 # common on flaky networks, and the deadline already bounds the
                 # total wait, so retrying cannot loop forever.
                 self.polls_made += 1
+                remaining()
                 logger.debug("token poll %d failed at the transport layer, retrying: %s", attempt, exc)
                 continue
 
             self.polls_made += 1
+            remaining()
             tokens, interval = self._dispatch(response, interval)
             self.final_interval = interval
             if tokens is not None:
+                remaining()
                 return tokens
-
-    # -- internals ---------------------------------------------------------
 
     def _dispatch(self, response: HttpResponse, interval: int) -> tuple[TokenSet | None, int]:
         """Dispatch on the response **body**, never on the HTTP status code.

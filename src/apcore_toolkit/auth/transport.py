@@ -12,6 +12,7 @@ response sequence, and the state machine above it is unchanged.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -52,6 +53,9 @@ class PreparedRequest:
     headers: Mapping[str, str] = field(default_factory=dict)
     encoding: str = "form"
     body: str = ""
+    # Optional remaining flow budget. Custom synchronous transports must enforce
+    # this themselves; the grant also rejects responses arriving after expiry.
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -83,9 +87,10 @@ class HttpxTransport:
     :class:`~apcore_toolkit.output.http_proxy_writer.HTTPProxyRegistryWriter`
     already does it: importing the package must not require it.
 
-    Python's client is synchronous throughout, per the recorded decision on
-    Open Question 1 — the shipped ``auth_header_factory`` seam is synchronous
-    and the ``httpx`` path here already is too.
+    The public API stays synchronous to match ``auth_header_factory``. The
+    default network path uses cancellable async HTTP internally so its total
+    deadline includes the complete response body. Injected synchronous clients
+    retain their configuration and ownership.
     """
 
     def __init__(self, client: Any = None, *, timeout: float | None = None) -> None:
@@ -95,22 +100,42 @@ class HttpxTransport:
     def send(self, request: PreparedRequest) -> HttpResponse:
         import httpx as _httpx
 
-        client = self._client
-        owns_client = client is None
-        if owns_client:
-            client = _httpx.Client(timeout=self._timeout)
+        budget = request.timeout_seconds
+        if self._client is None and self._timeout is not None:
+            budget = self._timeout if budget is None else min(self._timeout, budget)
+        began = time.monotonic()
         try:
-            response = client.request(
-                request.method,
-                request.url,
-                content=request.body.encode("utf-8") if request.body else None,
-                headers=dict(request.headers),
-            )
+            kwargs: dict[str, Any] = {
+                "content": request.body.encode("utf-8") if request.body else None,
+                "headers": dict(request.headers),
+            }
+            if self._client is None:
+                from apcore_toolkit._http import request as send
+
+                response = send(request.method, request.url, timeout=budget, **kwargs)
+            else:
+                # An injected synchronous client owns its transport and timeout
+                # policy. Cap its stage timeouts by the flow budget without
+                # changing the client or closing it. Arbitrary synchronous I/O
+                # cannot be safely forcibly cancelled; its owner must enforce
+                # the supplied budget. Never accept a late result.
+                if budget is not None:
+                    configured = getattr(self._client, "timeout", None)
+                    kwargs["timeout"] = (
+                        _httpx.Timeout(
+                            **{
+                                stage: budget if value is None else min(value, budget)
+                                for stage, value in configured.as_dict().items()
+                            }
+                        )
+                        if isinstance(configured, _httpx.Timeout)
+                        else budget
+                    )
+                response = self._client.request(request.method, request.url, **kwargs)
+                if budget is not None and time.monotonic() - began >= budget:
+                    raise _httpx.TimeoutException(f"HTTP request timed out after {budget:g}s")
         except _httpx.HTTPError as exc:
             raise TransportError(f"{request.kind} request to {request.url} failed: {exc}") from exc
-        finally:
-            if owns_client:
-                client.close()
         return HttpResponse(
             status=response.status_code,
             body=response.text,

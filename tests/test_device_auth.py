@@ -695,7 +695,7 @@ def test_timeout_seconds_wins_when_it_is_shorter_than_expires_in() -> None:
     with pytest.raises(Exception) as exc_info:
         grant.authorize(timeout_seconds=12)
     assert getattr(exc_info.value, "reason", None) == "deadline_exceeded"
-    assert delays == [5, 5, 5]
+    assert delays == [5, 5, 2]
 
 
 # --------------------------------------------------------------------------
