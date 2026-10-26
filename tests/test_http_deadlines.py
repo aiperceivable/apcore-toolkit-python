@@ -692,6 +692,8 @@ def test_http_bridge_interrupt_windows_close_worker(window: str) -> None:
         from unittest.mock import patch
         import apcore_toolkit._http as helper
         window = os.environ['HTTP_WINDOW']
+        ready_fd = int(os.environ['HTTP_READY_FD'])
+        def signal_ready(marker): os.write(ready_fd, f'{marker}\\n'.encode())
         class Client:
             def __init__(self, **kwargs): print('CLIENT_CREATED', flush=True)
             async def __aenter__(self): return self
@@ -705,7 +707,7 @@ def test_http_bridge_interrupt_windows_close_worker(window: str) -> None:
                             raise AssertionError('main-thread cancellation scheduling is interruptible')
                         return original(*args, **kwargs)
                     loop.call_soon_threadsafe = protected
-                    print('READY', flush=True)
+                    signal_ready('READY')
                 try:
                     await asyncio.Event().wait()
                 finally:
@@ -714,12 +716,12 @@ def test_http_bridge_interrupt_windows_close_worker(window: str) -> None:
         def controlled_start(self):
             original_start(self)
             if self.name == 'apcore-http' and window == 'start':
-                print('START_WINDOW', flush=True)
+                signal_ready('START_WINDOW')
                 threading.Event().wait()
         original_loop = helper._new_loop
         def controlled_loop():
             if window == 'pre_loop':
-                print('PRE_LOOP', flush=True)
+                signal_ready('PRE_LOOP')
                 time.sleep(0.15)
             return original_loop()
         async def main(): helper.request('GET', 'https://probe.invalid/', timeout=None)
@@ -731,24 +733,33 @@ def test_http_bridge_interrupt_windows_close_worker(window: str) -> None:
         print('WORKERS', [t.name for t in threading.enumerate() if t.name == 'apcore-http'], flush=True)
     """)
     project = Path(__file__).resolve().parents[1]
-    child = subprocess.Popen(
-        [sys.executable, "-u", "-c", code],
-        cwd=project,
-        env={**os.environ, "PYTHONPATH": str(project / "src"), "HTTP_WINDOW": window},
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    prefix = []
+    ready_read, ready_write = os.pipe()
+    try:
+        child = subprocess.Popen(
+            [sys.executable, "-u", "-c", code],
+            cwd=project,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(project / "src"),
+                "HTTP_WINDOW": window,
+                "HTTP_READY_FD": str(ready_write),
+            },
+            pass_fds=(ready_write,),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except BaseException:
+        os.close(ready_read)
+        raise
+    finally:
+        os.close(ready_write)
     try:
         assert child.stdout is not None
         marker = {"start": "START_WINDOW", "cancel": "READY", "pre_loop": "PRE_LOOP"}[window]
-        while True:
-            line = child.stdout.readline().strip()
-            prefix.append(line)
-            if line == marker:
-                break
-            assert line, "subprocess exited before entering the controlled interruption window"
+        with os.fdopen(ready_read) as ready:
+            observed = ready.readline().strip()
+        assert observed == marker, "subprocess exited before entering the controlled interruption window"
         child.send_signal(signal.SIGINT)
         if window == "start":
             time.sleep(0.03)
@@ -757,7 +768,6 @@ def test_http_bridge_interrupt_windows_close_worker(window: str) -> None:
             output, _ = child.communicate(timeout=1.5)
         except subprocess.TimeoutExpired:
             pytest.fail(f"HTTP worker must close after interruption in {window} window")
-        output = "\n".join(prefix) + "\n" + output
         assert child.returncode == 0, output
         assert "INTERRUPTED" in output
         assert "WORKERS []" in output
