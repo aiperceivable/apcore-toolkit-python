@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.2] - 2026-11-19
+
+Toolkit update for apcore 0.33.0. 
+
 ## [0.14.1] - 2026-10-25
 
 ### Fixed
