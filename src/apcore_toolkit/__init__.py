@@ -3,6 +3,9 @@
 Public API re-exports for convenient access to core types and utilities.
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _get_version
+
 from apcore_toolkit.ai_enhancer import AIEnhancer, Enhancer
 from apcore_toolkit.auth import (
     AuthError,
@@ -89,12 +92,10 @@ from apcore_toolkit.schema_utils import enrich_schema_descriptions
 from apcore_toolkit.serializers import annotations_to_dict, module_to_dict, modules_to_dicts
 from apcore_toolkit.types import ScannedModule, clone_module, create_scanned_module
 
-# Kept in sync with the `version` field in pyproject.toml. A previous
-# implementation derived this from `importlib.metadata.version(...)`, but that
-# reflects whatever distribution happens to be installed in the current
-# environment (which can be stale or absent, e.g. in editable/dev checkouts
-# or fresh CI environments), not the version of this source tree.
-__version__ = "0.14.2"
+try:
+    __version__ = _get_version("apcore-toolkit")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 __all__ = [
     "AIEnhancer",
