@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from apcore import Registry
+from apcore.errors import ModuleError
 
+from apcore_toolkit import OpenAPIScanner
 from apcore_toolkit.output.http_proxy_writer import HTTPProxyRegistryWriter
 from apcore_toolkit.types import ScannedModule
 
@@ -79,6 +81,62 @@ class TestHTTPProxyRegistryWriterTimeout:
 
 
 class TestHTTPProxyRegistryWriter:
+    def test_effective_proxy_sends_array_query_and_required_empty_body(self, monkeypatch) -> None:
+        spec = {
+            "openapi": "3.1.0",
+            "paths": {
+                "/items": {
+                    "get": {
+                        "operationId": "list_items",
+                        "parameters": [
+                            {"name": "tag", "in": "query", "schema": {"type": "array", "items": {"type": "string"}}}
+                        ],
+                    },
+                    "post": {
+                        "operationId": "create_item",
+                        "requestBody": {
+                            "required": True,
+                            "content": {
+                                "application/json": {"schema": {"type": "object", "properties": {"label": {}}}}
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        scanner = OpenAPIScanner()
+        seen: list[httpx.Request] = []
+
+        def capture(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        async def invoke() -> None:
+            async with httpx.AsyncClient(
+                base_url="http://localhost", transport=httpx.MockTransport(capture)
+            ) as transport:
+                monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: transport)
+                writer = HTTPProxyRegistryWriter(base_url="http://localhost")
+                effective_registry = Registry()
+                legacy_registry = Registry()
+                assert all(
+                    item.verified
+                    for item in writer.write(scanner.scan_with_effective_parameters(spec), effective_registry)
+                )
+                assert all(item.verified for item in writer.write(scanner.scan(spec), legacy_registry))
+                with pytest.raises(ModuleError, match="only scalar values"):
+                    await effective_registry._modules["list_items"].execute({"tag": ["red", None]})
+                await effective_registry._modules["list_items"].execute({"tag": ["red", "blue"]})
+                await effective_registry._modules["create_item"].execute({})
+                await legacy_registry._modules["create_item"].execute({})
+
+        asyncio.run(invoke())
+        query, effective, legacy = seen
+        assert query.url.params.multi_items() == [("tag", "red"), ("tag", "blue")]
+        assert effective.headers["content-type"] == "application/json"
+        assert effective.content == b"{}"
+        assert legacy.content == b""
+
     def test_write_registers_all_modules(self) -> None:
         registry = Registry()
         writer = HTTPProxyRegistryWriter(base_url="http://localhost:8000")
@@ -193,6 +251,45 @@ class TestHTTPProxyRegistryWriter:
         call_args = mock_client.request.call_args
         assert call_args[0] == ("POST", "/items")
         assert call_args[1]["json"] == {"name": "Test"}
+
+    def test_proxy_preserves_lowercase_post_query_dispatch(self, monkeypatch) -> None:
+        registry = Registry()
+        writer = HTTPProxyRegistryWriter(base_url="http://localhost:8000")
+
+        mod = _make_module(
+            module_id="test.create.post",
+            http_method="GET",
+            url_path="/items",
+            input_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        )
+        mod.http_method = "post"
+        mod.url_path = "/override"
+        writer.write([mod], registry)
+
+        module_instance = registry._modules["test.create.post"]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "1", "name": "Test"}
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        monkeypatch.setattr(httpx, "AsyncClient", MagicMock(return_value=mock_client))
+
+        result = asyncio.run(module_instance.execute({"name": "Test"}))
+        assert result["name"] == "Test"
+
+        call_args = mock_client.request.call_args
+        assert call_args[0] == ("post", "/override")
+        assert call_args[1]["params"] == {"name": "Test"}
+        assert "json" not in call_args[1]
 
     def test_proxy_substitutes_path_params(self, monkeypatch) -> None:
         registry = Registry()

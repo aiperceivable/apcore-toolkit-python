@@ -16,13 +16,25 @@ import re
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
-from apcore_toolkit.openapi import extract_input_schema, extract_output_schema, resolve_ref
+from apcore_toolkit.openapi import _extract_output_schema, extract_input_schema, resolve_ref
+from apcore_toolkit.openapi_parameters import _effective_input_schema
 from apcore_toolkit.scanner import BaseScanner
 from apcore_toolkit.types import ScannedModule
 
 __all__ = ["OpenAPIScanner", "derive_module_id", "load_spec"]
+
+
+class _OpenApiScanOptions(TypedDict, total=False):
+    include: str | None
+    exclude: str | None
+    base_path_prefix: str | None
+    include_deprecated: bool
+    transform_operation: Callable[[str, str, dict[str, Any]], dict[str, Any] | None] | None
+    derive_module_id: Callable[[str, str, dict[str, Any]], str | None] | None
+    transform_module: Callable[[ScannedModule], ScannedModule | None] | None
+
 
 # Only these path-item keys are treated as HTTP operations (OpenAPI 3.x Path
 # Item Object). Everything else (`summary`, `parameters`, `servers`, `$ref`,
@@ -278,6 +290,44 @@ class OpenAPIScanner(BaseScanner):
         See ``Contract: OpenAPIScanner.scan`` in
         ``apcore-toolkit/docs/features/openapi-scanner.md``.
         """
+        return self._scan(
+            spec,
+            effective_parameters=False,
+            include=include,
+            exclude=exclude,
+            base_path_prefix=base_path_prefix,
+            include_deprecated=include_deprecated,
+            transform_operation=transform_operation,
+            derive_module_id=derive_module_id,
+            transform_module=transform_module,
+        )
+
+    def scan_with_effective_parameters(
+        self, spec: dict[str, Any], **options: Unpack[_OpenApiScanOptions]
+    ) -> list[ScannedModule]:
+        """Scan inherited and operation parameters using the same inputs for schema and routing.
+
+        Operation parameters override Path Item parameters by ``(name, in)``.
+        Reference Objects may follow same-document JSON Pointers. Resolution
+        problems stay on each affected module in ``metadata.openapi.proxy_inputs``
+        so consumers can check only their final selection before proxying.
+        The accepted options and hooks match :meth:`scan`.
+        """
+        return self._scan(spec, effective_parameters=True, **options)
+
+    def _scan(
+        self,
+        spec: dict[str, Any],
+        *,
+        effective_parameters: bool,
+        include: str | None = None,
+        exclude: str | None = None,
+        base_path_prefix: str | None = None,
+        include_deprecated: bool = True,
+        transform_operation: Callable[[str, str, dict[str, Any]], dict[str, Any] | None] | None = None,
+        derive_module_id: Callable[[str, str, dict[str, Any]], str | None] | None = None,  # noqa: A002
+        transform_module: Callable[[ScannedModule], ScannedModule | None] | None = None,
+    ) -> list[ScannedModule]:
         self._validate_spec(spec)
 
         paths = spec.get("paths") or {}
@@ -320,8 +370,12 @@ class OpenAPIScanner(BaseScanner):
 
                 warnings = _ref_warnings(operation, spec)
 
-                input_schema = extract_input_schema(operation, spec)
-                output_schema = extract_output_schema(operation, spec)
+                proxy_inputs = None
+                if effective_parameters:
+                    input_schema, proxy_inputs = _effective_input_schema(path_item, operation, spec)
+                else:
+                    input_schema = extract_input_schema(operation, spec)
+                output_schema = _extract_output_schema(operation, spec, effective_parameters=effective_parameters)
                 responses = operation.get("responses") or {}
                 # `[0-9]` rather than `\d`: Python's `\d` matches any Unicode
                 # decimal digit (e.g. fullwidth digits, U+FF10-FF19), while
@@ -353,6 +407,8 @@ class OpenAPIScanner(BaseScanner):
                 description = summary or _first_line(documentation) or ""
 
                 openapi_meta: dict[str, Any] = {"spec_version": openapi_version}
+                if proxy_inputs is not None:
+                    openapi_meta["proxy_inputs"] = proxy_inputs.to_dict()
                 operation_id = operation.get("operationId")
                 if isinstance(operation_id, str) and operation_id:
                     openapi_meta["operation_id"] = operation_id

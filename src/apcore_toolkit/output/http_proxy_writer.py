@@ -28,13 +28,14 @@ import asyncio
 import logging
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import quote, urlparse
 
 from apcore import DEFAULT_ANNOTATIONS, ErrorCodes, Registry
 from apcore.errors import ModuleError
 from apcore_toolkit.http_verb_map import extract_path_param_names, substitute_path_params
+from apcore_toolkit.openapi_parameters import OpenApiProxyInputs
 from apcore_toolkit.output.types import WriteResult
 from apcore_toolkit.types import ScannedModule
 
@@ -44,6 +45,12 @@ logger = logging.getLogger("apcore_toolkit")
 # HEAD, DELETE, OPTIONS) forward non-path inputs via the query string
 # so they are not silently dropped.
 _BODY_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH"})
+
+
+def proxy_uses_json_body(http_method: str) -> bool:
+    """Whether the HTTP proxy sends inputs outside the path as a JSON body."""
+    return http_method in _BODY_METHODS
+
 
 # Matches any unfilled placeholder ({name} or :name) left after substitution.
 _UNFILLED_PARAM_RE: re.Pattern[str] = re.compile(r"\{[^}]+\}|:[a-zA-Z_]\w*")
@@ -60,24 +67,26 @@ def _percent_encode_path_segment(value: str) -> str:
     return quote(value, safe="")
 
 
-def _get_http_fields(mod: Any) -> tuple[str, str]:
-    """Extract http_method and url_path from a ScannedModule.
+def read_proxy_route(mod: Any, *, default_method: str | None = None) -> tuple[Any, Any]:
+    """Read raw proxy route values, preferring framework attributes over metadata.
 
-    Supports both:
-    - Toolkit ScannedModule (fields in ``metadata`` dict)
-    - Framework-specific ScannedModule (top-level attributes)
+    The optional method default applies only when the metadata key is absent.
+    Strict callers can omit it to diagnose missing values.
     """
-    metadata = (mod.metadata or {}) if hasattr(mod, "metadata") else {}
-    http_method = getattr(mod, "http_method", None)
-    if not http_method:
-        http_method = metadata.get("http_method", "GET")
-    url_path = getattr(mod, "url_path", None)
-    if not url_path:
-        url_path = metadata.get("url_path", "/") or "/"
-    url_path = str(url_path)
+    metadata = getattr(mod, "metadata", None) or {}
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    http_method = getattr(mod, "http_method", None) or metadata.get("http_method", default_method)
+    url_path = getattr(mod, "url_path", None) or metadata.get("url_path")
+    return http_method, url_path
+
+
+def _get_http_fields(mod: Any) -> tuple[str, str]:
+    http_method, url_path = read_proxy_route(mod, default_method="GET")
+    url_path = str(url_path or "/")
     if url_path.startswith(("http://", "https://", "file://", "ftp://")):
         raise ValueError(
-            f"url_path must be a relative path, not an absolute URL: {url_path!r} " f"(module: {mod.module_id!r})"
+            f"url_path must be a relative path, not an absolute URL: {url_path!r} (module: {mod.module_id!r})"
         )
     return str(http_method), url_path
 
@@ -158,6 +167,9 @@ class HTTPProxyRegistryWriter:
         base_url = self._base_url
         auth_factory = self._auth_header_factory
         timeout = self._timeout
+        effective_inputs = OpenApiProxyInputs.from_module(mod)
+        required_json_body = effective_inputs is not None and effective_inputs.required_json_body
+        effective_query = frozenset(effective_inputs.query) if effective_inputs is not None else frozenset()
 
         annotations = mod.annotations or DEFAULT_ANNOTATIONS
 
@@ -209,7 +221,7 @@ class HTTPProxyRegistryWriter:
                 if unfilled is not None:
                     raise ModuleError(
                         code=ErrorCodes.MODULE_EXECUTE_ERROR,
-                        message=(f"path parameter not provided: {unfilled.group(0)!r} " f"in url_path {url_path!r}"),
+                        message=(f"path parameter not provided: {unfilled.group(0)!r} in url_path {url_path!r}"),
                         details={"url_path": url_path, "missing": unfilled.group(0)},
                     )
                 non_path = {k: v for k, v in inputs.items() if k not in path_params}
@@ -218,18 +230,28 @@ class HTTPProxyRegistryWriter:
                 # (GET/DELETE/HEAD/OPTIONS) so non-path inputs are never
                 # silently dropped.
                 kwargs: dict[str, Any] = {}
-                if non_path:
-                    if http_method in _BODY_METHODS:
-                        kwargs["json"] = non_path
-                    else:
-                        if any(isinstance(v, (dict, list)) for v in non_path.values()):
-                            logger.warning(
-                                "HTTPProxyRegistryWriter: %s %s has nested dict/list params "
-                                "that will be str()-serialized in the query string",
-                                http_method,
-                                url_path,
+                if proxy_uses_json_body(http_method) and (non_path or required_json_body):
+                    kwargs["json"] = non_path
+                elif non_path:
+                    for name, values in non_path.items():
+                        if (
+                            name in effective_query
+                            and isinstance(values, list)
+                            and any(not isinstance(value, (str, bool, int, float)) for value in values)
+                        ):
+                            raise ModuleError(
+                                code=ErrorCodes.MODULE_EXECUTE_ERROR,
+                                message=f"Query array {name!r} must contain only scalar values",
+                                details={},
                             )
-                        kwargs["params"] = non_path
+                    if any(isinstance(v, (dict, list)) and k not in effective_query for k, v in non_path.items()):
+                        logger.warning(
+                            "HTTPProxyRegistryWriter: %s %s has nested dict/list params "
+                            "that will be str()-serialized in the query string",
+                            http_method,
+                            url_path,
+                        )
+                    kwargs["params"] = non_path
 
                 try:
                     # HTTPX's read timeout resets for every chunk. Keep a total

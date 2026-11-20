@@ -8,9 +8,63 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, cast
+from urllib.parse import unquote
 
 logger = logging.getLogger("apcore_toolkit")
+
+_SCHEMA_ANNOTATIONS = frozenset({"title", "description", "default", "examples", "deprecated", "readOnly", "writeOnly"})
+
+
+def _annotation_keyword(key: str) -> bool:
+    return key in _SCHEMA_ANNOTATIONS or key.startswith("x-")
+
+
+def _combine_schema_ref(target: dict[str, Any], siblings: dict[str, Any]) -> dict[str, Any]:
+    # Annotation-only siblings can be copied without changing validation.
+    if all(_annotation_keyword(key) for key in siblings):
+        return {**target, **siblings}
+    combined = {key: value for key, value in target.items() if _annotation_keyword(key)}
+    combined.update(siblings)
+    # CLI schema consumers use an explicit type to parse the argument. Keeping
+    # either declared type at the surface is redundant with the intersection.
+    schema_type = target.get("type")
+    if schema_type is not None:
+        combined.setdefault("type", schema_type)
+    # Keep sibling keywords adjacent to the referenced evaluation. For
+    # example, unevaluatedProperties can see properties evaluated by allOf.
+    sibling_all_of = siblings.get("allOf")
+    combined["allOf"] = [target, *(sibling_all_of if isinstance(sibling_all_of, list) else [])]
+    return combined
+
+
+def _walk_local_pointer(document: dict[str, Any], reference: str) -> Any:
+    """Resolve an RFC 6901 local URI fragment to any JSON value."""
+    if not reference.startswith("#"):
+        raise ValueError("expected a same-document JSON Pointer")
+    if re.search(r"%(?![0-9a-fA-F]{2})", reference):
+        raise ValueError("invalid URI fragment encoding")
+    try:
+        pointer = unquote(reference[1:], errors="strict")
+    except UnicodeError as error:
+        raise ValueError("fragment is not valid UTF-8") from error
+    if not pointer.startswith("/"):
+        raise ValueError("expected a same-document JSON Pointer")
+    current: Any = document
+    for token in pointer[1:].split("/"):
+        if re.search(r"~(?![01])", token):
+            raise ValueError("invalid JSON Pointer escape")
+        name = token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict) and name in current:
+            current = current[name]
+        elif isinstance(current, list) and re.fullmatch(r"0|[1-9][0-9]*", name):
+            # Bound the integer conversion by the size of the target array.
+            if len(name) > len(str(len(current))) or int(name) >= len(current):
+                raise ValueError("pointer does not identify an object")
+            current = current[int(name)]
+        else:
+            raise ValueError("pointer does not identify an object")
+    return current
 
 
 def resolve_ref(ref_string: str, openapi_doc: dict[str, Any]) -> dict[str, Any]:
@@ -23,6 +77,11 @@ def resolve_ref(ref_string: str, openapi_doc: dict[str, Any]) -> dict[str, Any]:
     Returns:
         The resolved schema dict, or empty dict on failure.
     """
+    resolved = _resolve_pointer(ref_string, openapi_doc)
+    return resolved if isinstance(resolved, dict) else {}
+
+
+def _resolve_pointer(ref_string: str, openapi_doc: dict[str, Any]) -> Any:
     if not ref_string.startswith("#/"):
         return {}
     # RFC 6901 §4 — decode `~1` to `/` BEFORE `~0` to `~` (order matters).
@@ -32,7 +91,7 @@ def resolve_ref(ref_string: str, openapi_doc: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(current, dict):
             return {}
         current = current.get(part, {})
-    return current if isinstance(current, dict) else {}
+    return current
 
 
 def resolve_schema(
@@ -54,21 +113,30 @@ def resolve_schema(
 
 
 def _deep_resolve_refs(
-    schema: dict[str, Any],
+    schema: dict[str, Any] | bool,
     openapi_doc: dict[str, Any],
     _depth: int = 0,
-) -> dict[str, Any]:
+    *,
+    boolean_refs: bool = False,
+) -> dict[str, Any] | bool:
     """Recursively resolve all ``$ref`` pointers in a schema.
 
     Handles nested ``$ref``, ``allOf``, ``anyOf``, ``oneOf``, and ``items``.
     Depth-limited to 16 levels to prevent infinite recursion.
     """
+    if isinstance(schema, bool):
+        return schema
+    if boolean_refs and not isinstance(schema, dict):
+        return {}
     if _depth > 16:
         logger.warning(
             "_deep_resolve_refs: depth limit (16) reached — possible circular $ref chain near %r",
             schema.get("$ref", schema.get("title", "<unknown>")),
         )
         return schema
+
+    def resolve(child: dict[str, Any] | bool, depth: int = _depth + 1) -> dict[str, Any] | bool:
+        return _deep_resolve_refs(child, openapi_doc, depth, boolean_refs=boolean_refs)
 
     if "$ref" in schema:
         # Resolve the target, then merge back any keys that sat BESIDE the
@@ -77,62 +145,69 @@ def _deep_resolve_refs(
         # the OpenAPI document marked sensitive then reaches apcore carrying
         # nothing to redact on. apcore closed the same hole in its own
         # resolver as D-98 in 0.31.0; see docs/features/openapi.md.
-        resolved = _deep_resolve_refs(resolve_ref(schema["$ref"], openapi_doc), openapi_doc, _depth + 1)
+        reference = schema["$ref"]
+        if boolean_refs:
+            try:
+                target = _walk_local_pointer(openapi_doc, reference) if isinstance(reference, str) else {}
+            except ValueError:
+                target = {}
+        else:
+            target = _resolve_pointer(reference, openapi_doc)
+        resolved = resolve(target if isinstance(target, dict) or (boolean_refs and isinstance(target, bool)) else {})
         siblings = {k: v for k, v in schema.items() if k != "$ref"}
         if not siblings:
             return resolved
         # Siblings are walked at the SAME depth: following the reference has
         # already consumed a level and they are not a second hop.
-        merged = dict(resolved)
-        merged.update(_deep_resolve_refs(siblings, openapi_doc, _depth))
-        return merged
+        resolved_siblings = cast(dict[str, Any], resolve(siblings, _depth))
+        if resolved is True:
+            return resolved_siblings
+        if resolved is False:
+            # Preserve sibling annotations while keeping the schema unsatisfiable.
+            existing = resolved_siblings.get("allOf")
+            return {**resolved_siblings, "allOf": [False, *(existing if isinstance(existing, list) else [])]}
+        if boolean_refs:
+            return _combine_schema_ref(resolved, resolved_siblings)
+        return {**resolved, **resolved_siblings}
 
     result = dict(schema)
 
     # Resolve inside allOf/anyOf/oneOf
     for key in ("allOf", "anyOf", "oneOf"):
         if key in result and isinstance(result[key], list):
-            result[key] = [_deep_resolve_refs(item, openapi_doc, _depth + 1) for item in result[key]]
+            result[key] = [resolve(item) for item in result[key]]
 
     # Resolve array items — dict form (single schema) or list form (tuple validation)
     if "items" in result:
         if isinstance(result["items"], dict):
-            result["items"] = _deep_resolve_refs(result["items"], openapi_doc, _depth + 1)
+            result["items"] = resolve(result["items"])
         elif isinstance(result["items"], list):
-            result["items"] = [
-                _deep_resolve_refs(item, openapi_doc, _depth + 1) for item in result["items"] if isinstance(item, dict)
-            ]
+            result["items"] = [resolve(item) for item in result["items"] if isinstance(item, (dict, bool))]
 
     # Resolve nested properties
     if "properties" in result and isinstance(result["properties"], dict):
-        result["properties"] = {
-            k: _deep_resolve_refs(v, openapi_doc, _depth + 1) for k, v in result["properties"].items()
-        }
+        result["properties"] = {k: resolve(v) for k, v in result["properties"].items()}
 
     # Resolve additionalProperties when it is a schema dict (not a boolean)
     if "additionalProperties" in result and isinstance(result["additionalProperties"], dict):
-        result["additionalProperties"] = _deep_resolve_refs(result["additionalProperties"], openapi_doc, _depth + 1)
+        result["additionalProperties"] = resolve(result["additionalProperties"])
 
-    # Resolve patternProperties — each value is a schema dict
+    # Resolve schema values inside patternProperties.
     if "patternProperties" in result and isinstance(result["patternProperties"], dict):
         result["patternProperties"] = {
-            pattern: _deep_resolve_refs(sub_schema, openapi_doc, _depth + 1)
+            pattern: resolve(sub_schema)
             for pattern, sub_schema in result["patternProperties"].items()
-            if isinstance(sub_schema, dict)
+            if isinstance(sub_schema, (dict, bool))
         }
 
     # Resolve not / if / then / else keywords
     for key in ("not", "if", "then", "else"):
         if key in result and isinstance(result[key], dict):
-            result[key] = _deep_resolve_refs(result[key], openapi_doc, _depth + 1)
+            result[key] = resolve(result[key])
 
     # Resolve prefixItems (JSON Schema draft 2020-12 tuple validation)
     if "prefixItems" in result and isinstance(result["prefixItems"], list):
-        result["prefixItems"] = [
-            _deep_resolve_refs(item, openapi_doc, _depth + 1)
-            for item in result["prefixItems"]
-            if isinstance(item, dict)
-        ]
+        result["prefixItems"] = [resolve(item) for item in result["prefixItems"] if isinstance(item, (dict, bool))]
 
     return result
 
@@ -155,7 +230,7 @@ def deep_resolve_refs(
     Returns:
         A new schema dict with all ``$ref`` pointers resolved.
     """
-    return _deep_resolve_refs(schema, openapi_doc, depth)
+    return cast(dict[str, Any], _deep_resolve_refs(schema, openapi_doc, depth))
 
 
 def extract_input_schema(
@@ -174,12 +249,6 @@ def extract_input_schema(
     Returns:
         A merged JSON Schema dict for all input parameters.
     """
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    }
-
     # Query/path parameters — guard against malformed OpenAPI docs where
     # `parameters` is present but not a list (e.g. an object). Mirrors the
     # TypeScript implementation's `Array.isArray` check + warning so the
@@ -187,23 +256,15 @@ def extract_input_schema(
     raw_parameters = operation.get("parameters", [])
     if not isinstance(raw_parameters, list):
         logger.warning(
-            "extract_input_schema: operation.parameters is not a list " "(got %s); ignoring",
+            "extract_input_schema: operation.parameters is not a list (got %s); ignoring",
             type(raw_parameters).__name__,
         )
         raw_parameters = []
-    for param in raw_parameters:
-        if not isinstance(param, dict):
-            continue
-        if param.get("in") in ("query", "path"):
-            name = param.get("name")
-            if not name:
-                continue
-            param_schema = param.get("schema", {"type": "string"})
-            param_schema = resolve_schema(param_schema, openapi_doc)
-            schema["properties"][name] = param_schema
-            if param.get("required", False):
-                schema["required"].append(name)
+    body_schema = _extract_json_body_schema(operation, openapi_doc)
+    return _extract_input_schema(raw_parameters, body_schema, openapi_doc)
 
+
+def _extract_json_body_schema(operation: dict[str, Any], openapi_doc: dict[str, Any] | None) -> dict[str, Any]:
     # Request body — use `or {}` so an explicit `null` (e.g. `"requestBody": null`
     # or `"content": null` from real generators) falls back to an empty dict
     # rather than crashing on `None.get(...)`. A malformed but TRUTHY
@@ -229,9 +290,33 @@ def extract_input_schema(
         if ct.startswith("application/json") or ct == "application/vnd.api+json":
             json_content = ct_content
             break
-    body_schema = json_content.get("schema") or {}
+    body_schema = json_content.get("schema") if isinstance(json_content, dict) else None
+    return resolve_schema(body_schema, openapi_doc) if isinstance(body_schema, dict) else {}
+
+
+def _extract_input_schema(
+    parameters: list[Any],
+    body_schema: dict[str, Any],
+    openapi_doc: dict[str, Any] | None,
+    *,
+    boolean_refs: bool = False,
+) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+    for param in parameters:
+        if not isinstance(param, dict) or param.get("in") not in ("query", "path"):
+            continue
+        name = param.get("name")
+        if not name:
+            continue
+        param_schema = param.get("schema", {"type": "string"})
+        if isinstance(param_schema, bool) or boolean_refs:
+            schema["properties"][name] = param_schema
+        else:
+            schema["properties"][name] = resolve_schema(param_schema, openapi_doc)
+        if param.get("required", False):
+            schema["required"].append(name)
+
     if body_schema:
-        body_schema = resolve_schema(body_schema, openapi_doc)
         for name, prop in (body_schema.get("properties") or {}).items():
             if name in schema["properties"]:
                 logger.warning(
@@ -246,7 +331,7 @@ def extract_input_schema(
     # Recursively resolve $ref inside individual properties
     if openapi_doc:
         for prop_name, prop_schema in list(schema["properties"].items()):
-            schema["properties"][prop_name] = _deep_resolve_refs(prop_schema, openapi_doc)
+            schema["properties"][prop_name] = _deep_resolve_refs(prop_schema, openapi_doc, boolean_refs=boolean_refs)
 
     return schema
 
@@ -264,6 +349,15 @@ def extract_output_schema(
     Returns:
         The output JSON Schema dict, or a default empty object schema.
     """
+    return _extract_output_schema(operation, openapi_doc, effective_parameters=False)
+
+
+def _extract_output_schema(
+    operation: dict[str, Any],
+    openapi_doc: dict[str, Any] | None,
+    *,
+    effective_parameters: bool,
+) -> dict[str, Any]:
     raw_responses = operation.get("responses") or {}
     # Normalize keys to strings before matching: some frameworks (e.g.
     # django-ninja) emit integer status-code keys like `{200: ...}` rather
@@ -284,17 +378,22 @@ def extract_output_schema(
             )
             continue
         content = response.get("content") or {}
+        if not isinstance(content, dict):
+            continue
         json_content: dict[str, Any] = {}
         for ct, ct_content in content.items():
             if ct.startswith("application/json") or ct == "application/vnd.api+json":
                 json_content = ct_content
                 break
-        if "schema" in json_content:
-            schema: dict[str, Any] = json_content["schema"]
+        schema = json_content.get("schema") if isinstance(json_content, dict) else None
+        if not isinstance(schema, (dict, bool)):
+            continue
+        if isinstance(schema, dict) and not effective_parameters:
             schema = resolve_schema(schema, openapi_doc)
-            # Recursively resolve all nested $ref pointers
-            if openapi_doc:
-                schema = _deep_resolve_refs(schema, openapi_doc)
-            return schema
+        if openapi_doc:
+            schema = _deep_resolve_refs(schema, openapi_doc, boolean_refs=effective_parameters)
+        if isinstance(schema, bool):
+            return {} if schema else {"not": {}}
+        return schema
 
     return {"type": "object", "properties": {}}

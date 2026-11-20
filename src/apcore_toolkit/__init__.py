@@ -46,7 +46,7 @@ from apcore_toolkit.openapi import (
 from apcore_toolkit.output import get_writer
 from apcore_toolkit.output.errors import InvalidFormatError, WriteError
 from apcore_toolkit.output.python_writer import PythonWriter
-from apcore_toolkit.output.http_proxy_writer import HTTPProxyRegistryWriter
+from apcore_toolkit.output.http_proxy_writer import HTTPProxyRegistryWriter, proxy_uses_json_body, read_proxy_route
 from apcore_toolkit.output.registry_writer import RegistryWriter
 from apcore_toolkit.output.types import Verifier, VerifyResult, WriteResult
 from apcore_toolkit.output.verifiers import (
@@ -59,6 +59,7 @@ from apcore_toolkit.output.verifiers import (
 )
 from apcore_toolkit.output.yaml_writer import YAMLWriter
 from apcore_toolkit.openapi_scanner import OpenAPIScanner, derive_module_id, load_spec
+from apcore_toolkit.openapi_parameters import OpenApiParameterProblem, OpenApiProxyInputs
 from apcore_toolkit.tui_view_model import (
     Cell,
     Column,
@@ -128,6 +129,8 @@ __all__ = [
     "MagicBytesVerifier",
     "NoCredentialError",
     "OpenAPIScanner",
+    "OpenApiParameterProblem",
+    "OpenApiProxyInputs",
     "PythonWriter",
     "RefreshFailedError",
     "RegistryVerifier",
@@ -174,6 +177,8 @@ __all__ = [
     "module_to_dict",
     "modules_to_dicts",
     "modules_to_view_model",
+    "proxy_uses_json_body",
+    "read_proxy_route",
     "resolve_http_verb",
     "resolve_ref",
     "resolve_schema",

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.3] - Unreleased
+
+### Added
+
+- `OpenAPIScanner.scan_with_effective_parameters()` resolves inherited Path Item
+  parameters and same-document Parameter Object references. Operation-level
+  declarations override matching `(name, in)` pairs. The scanner exposes the
+  inputs used for schema generation in `metadata.openapi.proxy_inputs` for
+  selected-operation proxy checks. `scan()` retains its existing behavior.
+
 ## [0.14.2] - 2026-11-19
 
 Toolkit update for apcore 0.33.0. 
