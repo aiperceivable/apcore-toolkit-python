@@ -2,9 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.14.3] - Unreleased
+## [0.15.0] - Unreleased
 
 ### Added
+
+- Shared OpenAPI proxy diagnostics and preflight over selected effective modules via
+  `detect_effective_proxy_hazards()` and `validate_effective_proxy_modules()`.
 
 - `OpenAPIScanner.scan_with_effective_parameters()` resolves inherited Path Item
   parameters and same-document Parameter Object references. Operation-level

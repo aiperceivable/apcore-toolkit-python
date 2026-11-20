@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
 
 
 _METADATA_KEY = "proxy_inputs"
+_EXTERNAL_REF = "<external-ref>"
 _LOCATIONS = ("path", "query", "header", "cookie")
 _PROBLEM_FIELDS: dict[str, dict[str, type]] = {
     "invalid_list": {},
@@ -66,9 +68,12 @@ class OpenApiParameterProblem:
             field = value.get(key)
             if type(field) is not kind_type or (kind_type is int and field < 0):
                 raise ValueError(f"effective input problem has an invalid {key!r}")
-        if kind == "unsupported_input" and (scope != "operation" or value["location"] not in ("query", "body")):
-            raise ValueError("unsupported input problems must identify a query or body input on an operation")
-        return cls(kind, scope, **{key: value[key] for key in fields})
+        if kind == "unsupported_input" and (scope != "operation" or value["location"] not in ("path", "query", "body")):
+            raise ValueError("unsupported input problems must identify a path, query or body input on an operation")
+        attributes = {key: value[key] for key in fields}
+        if kind == "reference" and attributes["reference"] != "<non-string>":
+            attributes["reference"] = _diagnostic_reference(attributes["reference"])
+        return cls(kind, scope, **attributes)
 
 
 @dataclass(frozen=True)
@@ -123,6 +128,10 @@ class OpenApiProxyInputs:
         )
 
 
+def _diagnostic_reference(reference: str) -> str:
+    return reference if reference.startswith("#") else _EXTERNAL_REF
+
+
 def _resolve_parameter(
     parameter: Any, document: dict[str, Any], scope: str, index: int
 ) -> tuple[Any, OpenApiParameterProblem | None]:
@@ -141,7 +150,9 @@ def _resolve_parameter(
             if not isinstance(parameter, dict):
                 raise ValueError("pointer does not identify an object")
         except ValueError as error:
-            return None, OpenApiParameterProblem("reference", scope, index, reference, str(error))
+            return None, OpenApiParameterProblem(
+                "reference", scope, index, _diagnostic_reference(reference), str(error)
+            )
     return parameter, None
 
 
@@ -215,19 +226,55 @@ def _effective_request_body_schema(
     return schema, body.get("required") is True, None
 
 
+def _schema_branches(schema: Any) -> Iterator[dict[str, Any]]:
+    if not isinstance(schema, dict):
+        return
+    yield schema
+    for keyword in ("allOf", "anyOf", "oneOf"):
+        clauses = schema.get(keyword)
+        if isinstance(clauses, list):
+            for clause in clauses:
+                yield from _schema_branches(clause)
+
+
 def _explicit_type(schema: dict[str, Any], *names: str) -> bool:
     schema_type = schema.get("type")
     return schema_type in names or (isinstance(schema_type, list) and any(name in schema_type for name in names))
 
 
-def _unsupported_query_array(parameter: dict[str, Any], schema: Any) -> bool:
-    if not isinstance(schema, dict) or not _explicit_type(schema, "array"):
-        return False
-    if parameter.get("style", "form") != "form" or parameter.get("explode", True) is not True:
+def _array_item_schemas(schema: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    yield from _schema_branches(schema.get("items"))
+    prefix = schema.get("prefixItems")
+    if isinstance(prefix, list):
+        for item in prefix:
+            yield from _schema_branches(item)
+
+
+def _explicit_scalar_type(schema: Any) -> bool:
+    scalar_types = ("string", "integer", "number", "boolean")
+    declared = schema.get("type") if isinstance(schema, dict) else None
+    return declared in scalar_types or (
+        isinstance(declared, list) and bool(declared) and all(kind in scalar_types for kind in declared)
+    )
+
+
+def _unsupported_serialization(location: str, parameter: dict[str, Any], schema: Any) -> bool:
+    if "content" in parameter:
         return True
-    items = schema.get("items")
-    return isinstance(items, dict) and (
-        _explicit_type(items, "array", "object") or items.get("type") in ("null", ["null"])
+    branches = tuple(_schema_branches(schema))
+    if location == "path":
+        return parameter.get("style", "simple") != "simple" or any(
+            _explicit_type(branch, "object", "array") for branch in branches
+        )
+
+    if parameter.get("style", "form") != "form" or any(_explicit_type(branch, "object") for branch in branches):
+        return True
+    if parameter.get("explode", True) is not True and not _explicit_scalar_type(schema):
+        return True
+    if not any(_explicit_type(branch, "array") for branch in branches):
+        return False
+    return any(
+        _explicit_type(items, "array", "object", "null") for branch in branches for items in _array_item_schemas(branch)
     )
 
 
@@ -246,10 +293,12 @@ def _effective_input_schema(
             )
         )
     for (name, location), parameter in parameters.items():
-        if location == "query" and _unsupported_query_array(parameter, schema["properties"].get(name)):
+        if location in ("path", "query") and _unsupported_serialization(
+            location, parameter, schema["properties"].get(name)
+        ):
             problems.append(
                 OpenApiParameterProblem(
-                    "unsupported_input", "operation", name=name, location="query", reason="query_serialization"
+                    "unsupported_input", "operation", name=name, location=location, reason=f"{location}_serialization"
                 )
             )
     inputs = OpenApiProxyInputs(

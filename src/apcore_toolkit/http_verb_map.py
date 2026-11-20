@@ -163,3 +163,24 @@ def substitute_path_params(path: str, values: dict[str, Any]) -> str:
         return match.group(0)
 
     return _PATH_PARAM_NAMED_RE.sub(_replace, path)
+
+
+_OPENAPI_PATH_PARAM_RE: re.Pattern[str] = re.compile(r"\{([^{}]+)\}")
+
+
+def _effective_openapi_path(path: object) -> str | None:
+    """Return an origin-relative OpenAPI path with well-formed placeholders."""
+    if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
+        return None
+    if any(character in path for character in ("?", "#", "\\")):
+        return None
+    literals = _OPENAPI_PATH_PARAM_RE.sub("", path)
+    return None if "{" in literals or "}" in literals else path
+
+
+def _openapi_path_param_names(path: str) -> set[str]:
+    return set(_OPENAPI_PATH_PARAM_RE.findall(path))
+
+
+def _substitute_openapi_path_params(path: str, values: dict[str, str]) -> str:
+    return _OPENAPI_PATH_PARAM_RE.sub(lambda match: values.get(match[1], match[0]), path)

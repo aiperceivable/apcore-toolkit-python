@@ -223,3 +223,78 @@ def test_effective_request_body_selects_actual_proxy_media_type_and_resolves_ref
     [module] = OpenAPIScanner().scan_with_effective_parameters(document)
     assert module.input_schema["properties"] == {"plain": {"type": "string"}}
     assert OpenApiProxyInputs.from_module(module) == OpenApiProxyInputs((), (), ("plain",), ())
+
+
+@pytest.mark.parametrize(
+    "location,keywords,schema",
+    [
+        ("path", {"style": "label"}, {"type": "string"}),
+        ("path", {}, {"anyOf": [{"type": "string"}, {"type": "array"}]}),
+        ("query", {}, {"oneOf": [{"type": "object"}, {"type": "string"}]}),
+        ("query", {}, {"allOf": [{"type": "array"}, {"items": {"type": "object"}}]}),
+        ("query", {}, {"allOf": [{"type": "array"}, {"prefixItems": [{"type": "null"}]}]}),
+        ("query", {"explode": False}, {}),
+        ("query", {"explode": False}, {"oneOf": [{"type": "string"}, {"type": "number"}]}),
+        ("query", {"content": {"application/json": {"schema": {"type": "string"}}}}, None),
+        ("path", {"content": {"text/plain": {"schema": {"type": "string"}}}}, None),
+        (
+            "query",
+            {"explode": False},
+            {"allOf": [{"type": "array", "items": {"type": "string"}}]},
+        ),
+    ],
+)
+def test_effective_parameters_diagnose_unsupported_serialization(location, keywords, schema):
+    path = "/items/{value}" if location == "path" else "/items"
+    parameter = {"name": "value", "in": location, "required": True, **keywords}
+    if schema is not None:
+        parameter["schema"] = schema
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            path: {
+                "get": {
+                    "operationId": "items",
+                    "parameters": [parameter],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+
+    [module] = OpenAPIScanner().scan_with_effective_parameters(spec)
+    inputs = OpenApiProxyInputs.from_module(module)
+    assert inputs is not None
+    [problem] = inputs.problems
+    assert (problem.kind, problem.location, problem.reason) == (
+        "unsupported_input",
+        location,
+        f"{location}_serialization",
+    )
+    assert inputs.to_dict()["problems"] == [problem.to_dict()]
+
+
+def test_effective_query_explicit_scalar_can_disable_explode():
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/items": {
+                "get": {
+                    "parameters": [
+                        {
+                            "name": "value",
+                            "in": "query",
+                            "explode": False,
+                            "schema": {"type": ["string", "integer"]},
+                        }
+                    ],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+
+    [module] = OpenAPIScanner().scan_with_effective_parameters(spec)
+    inputs = OpenApiProxyInputs.from_module(module)
+    assert inputs is not None
+    assert not inputs.problems

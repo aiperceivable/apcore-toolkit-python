@@ -60,6 +60,11 @@ from apcore_toolkit.output.verifiers import (
 from apcore_toolkit.output.yaml_writer import YAMLWriter
 from apcore_toolkit.openapi_scanner import OpenAPIScanner, derive_module_id, load_spec
 from apcore_toolkit.openapi_parameters import OpenApiParameterProblem, OpenApiProxyInputs
+from apcore_toolkit.openapi_proxy import (
+    EffectiveProxyHazard,
+    detect_effective_proxy_hazards,
+    validate_effective_proxy_modules,
+)
 from apcore_toolkit.tui_view_model import (
     Cell,
     Column,
@@ -123,6 +128,9 @@ __all__ = [
     "Grant",
     "Group",
     "HTTPProxyRegistryWriter",
+    "EffectiveProxyHazard",
+    "detect_effective_proxy_hazards",
+    "validate_effective_proxy_modules",
     "Enhancer",
     "InvalidFormatError",
     "JSONVerifier",

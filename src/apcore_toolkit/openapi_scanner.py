@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, TypedDict, Unpack
 
 from apcore_toolkit.openapi import _extract_output_schema, extract_input_schema, resolve_ref
-from apcore_toolkit.openapi_parameters import _effective_input_schema
+from apcore_toolkit.openapi_parameters import _diagnostic_reference, _effective_input_schema
 from apcore_toolkit.scanner import BaseScanner
 from apcore_toolkit.types import ScannedModule
 
@@ -181,7 +181,7 @@ def _collect_refs(node: Any) -> list[str]:
     return refs
 
 
-def _ref_warnings(operation: dict[str, Any], spec: dict[str, Any]) -> list[str]:
+def _ref_warnings(operation: dict[str, Any], spec: dict[str, Any], *, redact_external: bool = False) -> list[str]:
     """Warn on unresolvable internal refs and refuse external refs.
 
     Internal refs (``#/...``) that resolve successfully are silent — this
@@ -196,7 +196,7 @@ def _ref_warnings(operation: dict[str, Any], spec: dict[str, Any]) -> list[str]:
             continue
         seen.add(ref)
         if not ref.startswith("#/"):
-            warnings.append(f"external $ref not fetched: {ref}")
+            warnings.append(f"external $ref not fetched: {_diagnostic_reference(ref) if redact_external else ref}")
         elif not resolve_ref(ref, spec):
             warnings.append(f"unresolvable $ref: {ref}")
     return warnings
@@ -368,7 +368,7 @@ class OpenAPIScanner(BaseScanner):
                 if base_path_prefix:
                     mid = f"{base_path_prefix}.{mid}"
 
-                warnings = _ref_warnings(operation, spec)
+                warnings = _ref_warnings(operation, spec, redact_external=effective_parameters)
 
                 proxy_inputs = None
                 if effective_parameters:

@@ -34,7 +34,13 @@ from urllib.parse import quote, urlparse
 
 from apcore import DEFAULT_ANNOTATIONS, ErrorCodes, Registry
 from apcore.errors import ModuleError
-from apcore_toolkit.http_verb_map import extract_path_param_names, substitute_path_params
+from apcore_toolkit.http_verb_map import (
+    _effective_openapi_path,
+    _openapi_path_param_names,
+    _substitute_openapi_path_params,
+    extract_path_param_names,
+    substitute_path_params,
+)
 from apcore_toolkit.openapi_parameters import OpenApiProxyInputs
 from apcore_toolkit.output.types import WriteResult
 from apcore_toolkit.types import ScannedModule
@@ -67,6 +73,24 @@ def _percent_encode_path_segment(value: str) -> str:
     return quote(value, safe="")
 
 
+def _format_path_value(name: str, value: Any, *, effective: bool) -> str:
+    if effective and not isinstance(value, (str, bool, int, float)):
+        raise ModuleError(
+            code=ErrorCodes.MODULE_EXECUTE_ERROR,
+            message=f"Path parameter {name!r} must be a scalar value",
+            details={},
+        )
+    return str(value).lower() if effective and isinstance(value, bool) else str(value)
+
+
+def _unfilled_path_parameter(path: str, *, effective: bool) -> str | None:
+    if effective:
+        missing = min(_openapi_path_param_names(path), default=None)
+        return "{" + missing + "}" if missing is not None else None
+    match = _UNFILLED_PARAM_RE.search(path)
+    return match[0] if match is not None else None
+
+
 def read_proxy_route(mod: Any, *, default_method: str | None = None) -> tuple[Any, Any]:
     """Read raw proxy route values, preferring framework attributes over metadata.
 
@@ -81,8 +105,13 @@ def read_proxy_route(mod: Any, *, default_method: str | None = None) -> tuple[An
     return http_method, url_path
 
 
-def _get_http_fields(mod: Any) -> tuple[str, str]:
+def _get_http_fields(mod: Any, *, effective: bool = False) -> tuple[str, str]:
     http_method, url_path = read_proxy_route(mod, default_method="GET")
+    if effective:
+        effective_path = _effective_openapi_path(url_path)
+        if effective_path is None:
+            raise ValueError(f"valid 'url_path' is required (module: {mod.module_id!r})")
+        return str(http_method), effective_path
     url_path = str(url_path or "/")
     if url_path.startswith(("http://", "https://", "file://", "ftp://")):
         raise ValueError(
@@ -159,15 +188,15 @@ class HTTPProxyRegistryWriter:
 
     def _build_module_class(self, mod: ScannedModule) -> type:
         """Build a module class with HTTP proxy execute method."""
-        http_method, url_path = _get_http_fields(mod)
-        # Recognise both brace-style ({id}) and colon-style (:id) params,
-        # delegating to the canonical regex in http_verb_map so the two
-        # conventions do not drift apart.
-        path_params = extract_path_param_names(url_path)
+        effective_inputs = OpenApiProxyInputs.from_module(mod)
+        effective = effective_inputs is not None
+        http_method, url_path = _get_http_fields(mod, effective=effective)
+        path_names = _openapi_path_param_names if effective else extract_path_param_names
+        substitute_path = _substitute_openapi_path_params if effective else substitute_path_params
+        path_params = path_names(url_path)
         base_url = self._base_url
         auth_factory = self._auth_header_factory
         timeout = self._timeout
-        effective_inputs = OpenApiProxyInputs.from_module(mod)
         required_json_body = effective_inputs is not None and effective_inputs.required_json_body
         effective_query = frozenset(effective_inputs.query) if effective_inputs is not None else frozenset()
 
@@ -212,17 +241,21 @@ class HTTPProxyRegistryWriter:
                 # substitution so values containing "/", "?", "#", "%", or
                 # whitespace cannot corrupt the URL. Mirrors the Rust
                 # implementation's percent_encode_path_segment.
-                path_values = {k: _percent_encode_path_segment(str(v)) for k, v in inputs.items() if k in path_params}
-                actual_path = substitute_path_params(url_path, path_values)
+                path_values = {
+                    name: _percent_encode_path_segment(_format_path_value(name, value, effective=effective))
+                    for name, value in inputs.items()
+                    if name in path_params
+                }
+                actual_path = substitute_path(url_path, path_values)
                 # Reject the request if any placeholder went unfilled —
                 # otherwise a forgotten input would silently leak `{name}`
                 # into the request URL.
-                unfilled = _UNFILLED_PARAM_RE.search(actual_path)
-                if unfilled is not None:
+                missing = _unfilled_path_parameter(actual_path, effective=effective)
+                if missing is not None:
                     raise ModuleError(
                         code=ErrorCodes.MODULE_EXECUTE_ERROR,
-                        message=(f"path parameter not provided: {unfilled.group(0)!r} in url_path {url_path!r}"),
-                        details={"url_path": url_path, "missing": unfilled.group(0)},
+                        message=(f"path parameter not provided: {missing!r} in url_path {url_path!r}"),
+                        details={"url_path": url_path, "missing": missing},
                     )
                 non_path = {k: v for k, v in inputs.items() if k not in path_params}
 
@@ -234,10 +267,16 @@ class HTTPProxyRegistryWriter:
                     kwargs["json"] = non_path
                 elif non_path:
                     for name, values in non_path.items():
-                        if (
-                            name in effective_query
-                            and isinstance(values, list)
-                            and any(not isinstance(value, (str, bool, int, float)) for value in values)
+                        if name not in effective_query:
+                            continue
+                        if isinstance(values, dict):
+                            raise ModuleError(
+                                code=ErrorCodes.MODULE_EXECUTE_ERROR,
+                                message=f"Query parameter {name!r} cannot contain an object",
+                                details={},
+                            )
+                        if isinstance(values, list) and any(
+                            not isinstance(value, (str, bool, int, float)) for value in values
                         ):
                             raise ModuleError(
                                 code=ErrorCodes.MODULE_EXECUTE_ERROR,

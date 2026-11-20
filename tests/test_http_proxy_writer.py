@@ -628,3 +628,61 @@ class TestProxyModuleExecute:
 
         with pytest.raises(ModuleError):
             asyncio.run(module_instance.execute({}))
+
+
+def test_effective_openapi_path_treats_colon_as_literal(monkeypatch) -> None:
+    from apcore_toolkit.openapi_proxy import detect_effective_proxy_hazards
+
+    spec = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/items/{id}:search": {
+                "get": {
+                    "operationId": "search",
+                    "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+    [module] = OpenAPIScanner().scan_with_effective_parameters(spec)
+    assert not detect_effective_proxy_hazards([module])
+    seen: list[bytes] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.raw_path)
+        return httpx.Response(200, json={})
+
+    async def execute() -> None:
+        async with httpx.AsyncClient(base_url="http://localhost", transport=httpx.MockTransport(capture)) as client:
+            monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+            registry = Registry()
+            [result] = HTTPProxyRegistryWriter("http://localhost").write([module], registry)
+            assert result.verified
+            await registry.get(module.module_id).execute({"id": "blue/green"})
+
+    asyncio.run(execute())
+    assert seen == [b"/items/blue%2Fgreen:search"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["http://localhost/items", "//localhost/items", "items", "/items?option=1", "/items#part", "/items/{id"],
+)
+def test_effective_openapi_route_validation_matches_writer(path) -> None:
+    from apcore_toolkit.openapi_proxy import detect_effective_proxy_hazards
+
+    spec = {"openapi": "3.1.0", "paths": {"/items": {"get": {"responses": {"200": {"description": "OK"}}}}}}
+    [module] = OpenAPIScanner().scan_with_effective_parameters(spec)
+    module.metadata["url_path"] = path
+    [hazard] = detect_effective_proxy_hazards([module])
+    assert hazard.to_dict() == {
+        "module_id": module.module_id,
+        "http_method": "GET",
+        "url_path": "?",
+        "kind": {"code": "missing_route_metadata", "key": "url_path"},
+    }
+    registry = Registry()
+    [result] = HTTPProxyRegistryWriter("http://localhost").write([module], registry)
+    assert not result.verified
+    assert not registry.list()
